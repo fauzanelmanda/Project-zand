@@ -1,0 +1,72 @@
+{
+  "summary": "Full backend + frontend E2E test of ARMI Rental Management. Backend: 48 pytest cases across auth (login/me/logout/guards/bcrypt/cookie), vehicles CRUD+search+filter+status+delete-block, customers CRUD+rental history, rentals create/auto-price/overlap-409/status transitions/vehicle sync/delete, dashboard, reports, upload/files, CORS -> 44 passed (92%). Frontend: login+redirect guards, dashboard stats/chart/recent/returning lists, full vehicle CRUD via UI, customer CRUD+history+WA links, rental creation with auto-calc (Rp 900.000 for 3 days), 409 'Booking bentrok!' toast, rental+payment status changes with vehicle auto-sync (Disewa/Tersedia), WA deep links (wa.me/62...), reports presets, calendar grid+nav, mobile viewport & mobile menu, logout. Core flows all work; 4 real defects found.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/rentals", "issue": "Malformed date (e.g. tanggal_mulai='31-12-2026', tanggal_kembali='not-a-date') raises unhandled ValueError in parse_date() -> HTTP 500 Internal Server Error instead of 400/422. Add a Pydantic validator or try/except around parse_date.", "priority": "HIGH"},
+      {"endpoint": "GET /api/reports?start=bogus&end=bogus", "issue": "Invalid date query params -> 500 (same unhandled parse_date ValueError). Should return 400.", "priority": "HIGH"},
+      {"endpoint": "PATCH /api/rentals/{id}/status", "issue": "Double-booking check is bypassed: a Dibatalkan/Selesai rental can be flipped back to Aktif/Booking even when another Booking/Aktif rental covers the exact same vehicle+date range. Reproduced in tests/test_overlap_bypass.py (returns 200, expected 409). date_overlap_exists(..., exclude_id=id) must be re-run when status_rental becomes Booking/Aktif.", "priority": "HIGH"},
+      {"endpoint": "POST /api/auth/login", "issue": "No brute-force protection: 6+ consecutive wrong passwords all return 401, no 429/423 lockout (playbook requires lockout after 5 failures).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/rentals", "issue": "transaksi_id is generated from count_documents({})+1, so after any rental deletion the next created rental reuses an existing TRX-YYYYMM-NNNN number (duplicate transaction IDs). Use a counter collection or uuid-based suffix."},
+      {"endpoint": "GET /api/dashboard", "issue": "Revenue chart months are computed with 30-day arithmetic (now.replace(day=1) - i*30 days), which can duplicate or skip a month label depending on the current date. Use proper month decrement."},
+      {"endpoint": "POST /api/rentals", "issue": "'deposit' is stored but never used: total = subtotal, no remaining-balance field. If deposit is meant to reduce the amount due this is a business-logic gap; if not, the UI should show 'sisa pembayaran'."},
+      {"endpoint": "GET /api/reports & /api/dashboard", "issue": "revenue includes rentals still in 'Booking' status (not yet realized income). Confirm intent."},
+      {"endpoint": "N/A (server.py)", "issue": "CORS_ORIGINS='*' combined with allow_credentials=True means any origin can send credentialed requests. Playbook requires explicit origins when credentials are allowed."},
+      {"endpoint": "N/A (server.py)", "issue": "No PUT/PATCH endpoint to edit an existing rental (dates/customer/vehicle) - only status can be changed. Feature gap if editing is expected."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CalendarPage - Daftar Jadwal", "issue": "The schedule list is not scoped to the displayed month: it always renders every non-cancelled rental. Navigating to November 2026 (empty grid) still lists the 5 Aug/Sep rentals. Filter `active` by the cursor month or rename the section to 'Semua Jadwal'.", "selector": "[data-testid=\"calendar-list\"]", "priority": "MEDIUM"},
+      {"component": "Layout mobile menu (Sheet)", "issue": "Console a11y error: 'DialogContent requires a DialogTitle for the component to be accessible for screen reader users' when opening the mobile nav. Add SheetTitle (optionally visually hidden).", "selector": "[data-testid=\"mobile-menu-button\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Vehicles list / Dashboard recent rentals / vehicle detail", "issues": ["All 7 seeded vehicles use the same single Unsplash photo (veh_photos[0]) and that image does not show a car at all - it renders a grey stone wall/building. Every card and dashboard thumbnail shows the same irrelevant picture. Replace with per-vehicle car images."]},
+      {"screen": "Rental create dialog + Reports custom range", "issues": ["Date fields use the native browser date picker (<input type='date'>, shows MM/DD/YYYY US format) instead of the shadcn Calendar/Popover component; inconsistent with the Bahasa Indonesia UI and the rest of the design system."]},
+      {"screen": "Reports - 'Hari Ini' preset", "issues": ["Shows 0 rental / Rp 0 even though a rental is active and returns today, because filtering is on tanggal_mulai only. Consider filtering on overlapping period, or label the metric as 'rental dimulai pada periode'."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_overlap_bypass.py",
+    "/app/backend/tests/test_cleanup.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Wrap parse_date in validation so malformed dates return 400/422 instead of 500 (POST /api/rentals, GET /api/reports).",
+    "Re-run date_overlap_exists (with exclude_id) inside PATCH /api/rentals/{id}/status when the new status_rental is Booking/Aktif, returning 409 on conflict.",
+    "Add brute-force lockout (5 failed logins -> 429/423) on POST /api/auth/login.",
+    "Make transaksi_id generation collision-free (do not derive from document count).",
+    "Filter Calendar 'Daftar Jadwal' by the currently displayed month.",
+    "Replace the seeded vehicle photo (currently a stone wall image reused for all 7 vehicles) with real, distinct car images.",
+    "Replace native <input type=date> with shadcn Calendar in the rental dialog and Reports custom range.",
+    "Set explicit CORS_ORIGINS instead of '*' since allow_credentials=True.",
+    "Add SheetTitle to the mobile nav sheet to clear the a11y console error."
+  ],
+  "critical_code_review_comments": [
+    "server.py parse_date() is called on user input in create_rental, date_overlap_exists and reports without try/except -> 500s. Validate with Pydantic field_validator on RentalInput and Query validation on /reports.",
+    "PATCH /rentals/{id}/status only calls sync_vehicle_status; it skips the overlap guard, so the 409 double-booking protection can be bypassed by status transitions.",
+    "transaksi_id = f'TRX-{YYYYMM}-{count+1:04d}' is not unique after deletes; there is also no unique index on rentals.transaksi_id.",
+    "CORS: allow_credentials=True with allow_origins=['*'] is unsafe (and browser-invalid for wildcard); use explicit preview/prod origins.",
+    "No rate limiting on the login endpoint; JWT lifetime is 7 days with no refresh/revocation.",
+    "Dashboard chart month keys computed via i*30 days arithmetic can duplicate/skip months.",
+    "server.py is 707 lines - consider splitting routers (auth/vehicles/customers/rentals/reports) into modules."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_overlap_bypass.py",
+    "/app/backend/tests/test_cleanup.py"
+  ],
+  "success_rate": {"backend": "92% (44/48 pytest cases)", "frontend": "92% (all core flows pass; 1 medium calendar-scope bug + design/content issues)"},
+  "seed_data_creation": "No permanent data added. Temporary QA data created and deleted during tests: vehicle 'QATest Mobil QA' (QA 111 TST), customer 'QA Pelanggan', a Honda Brio rental, and TEST_-prefixed API fixtures. tests/test_cleanup.py removes any leftovers and was run - DB is back to the 7 seeded vehicles / 4 customers / 5 rentals baseline.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "fauzan.elmanda@gmail.com / admin123 (from /app/memory/test_credentials.md) - valid, login works; bcrypt hash verified as $2b$ format; httpOnly+Secure+SameSite=None access_token cookie is set on login.",
+  "context_for_next_testing_agent": "Backend suite lives in /app/backend/tests (conftest.py reads REACT_APP_BACKEND_URL from /app/frontend/.env and credentials from /app/memory/test_credentials.md). Run: cd /app/backend && python -m pytest tests/ -q. Known-failing (real bugs, not test bugs): brute_force_lockout, test_malformed_date (500), test_invalid_date_params (500), test_overlap_bypass (409 expected). TestCustomers::test_crud_and_rentals_history flaked once out of 5 parallel runs (~20%) due to xdist cross-worker rental creation; passes serially. TestReports::test_no_filter uses a +/-3 tolerance for the same reason. Frontend UI verified end-to-end with Playwright: login guards, dashboard, vehicle CRUD/search/filter/status/delete-block, customer CRUD/history/WA, rental create+auto-calc+409 overlap+status sync+WA deep links, reports presets, calendar grid/nav, mobile viewport. Not yet tested: vehicle photo upload via /api/upload from the UI (object storage), rental filter tab deep-links, tablet breakpoint.",
+  "flaky_tests": ["TestCustomers::test_crud_and_rentals_history - ~20% failure rate under pytest-xdist parallel runs (cross-worker rental creation), passes 100% serially"],
+  "rca_of_the_issue": "1) 500s: server.py parse_date() uses datetime.strptime without error handling; any non-YYYY-MM-DD input propagates ValueError through FastAPI -> 500 (traceback confirmed in /var/log/supervisor/backend.err.log). 2) Double-booking bypass: create_rental guards overlaps with date_overlap_exists, but update_rental_status only writes the new status and calls sync_vehicle_status, so re-activating a cancelled/finished rental over an existing Booking/Aktif range is accepted with 200. 3) transaksi_id collisions: sequence derived from rentals.count_documents({}) so deletions cause reuse. 4) No login throttling implemented anywhere in server.py."
+}

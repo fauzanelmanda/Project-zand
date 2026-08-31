@@ -1,0 +1,115 @@
+{
+  "theme_and_context": {
+    "app_name": "ARMI Rental Management",
+    "type": "Admin Dashboard / SaaS",
+    "theme": "Light (terang, clean & premium)",
+    "language": "Bahasa Indonesia (All visible UI text)",
+    "design_persona": "Premium, clean, modern, and highly functional. Blends Swiss High-Contrast clarity with Soft Neutral warmth to create a trustworthy and efficient car rental management tool for the Indonesian market."
+  },
+  "typography": {
+    "fonts": {
+      "headings": "Outfit",
+      "body": "Manrope"
+    },
+    "rules": {
+      "h1": "text-2xl sm:text-3xl font-bold tracking-tight text-slate-900",
+      "h2": "text-xl sm:text-2xl font-semibold tracking-tight text-slate-800",
+      "h3": "text-lg sm:text-xl font-medium text-slate-800",
+      "body": "text-sm sm:text-base text-slate-600 leading-relaxed",
+      "labels": "text-xs font-semibold tracking-[0.05em] uppercase text-slate-500",
+      "forbidden_fonts": ["Inter", "Space Grotesk"]
+    }
+  },
+  "colors": {
+    "background": "bg-slate-50",
+    "surface": "bg-white",
+    "primary": "bg-blue-600 hover:bg-blue-700 text-white (Premium automotive blue)",
+    "text": {
+      "primary": "text-slate-900",
+      "secondary": "text-slate-600",
+      "muted": "text-slate-400"
+    },
+    "borders": "border-slate-200",
+    "status": {
+      "tersedia": "bg-emerald-50 text-emerald-700 border border-emerald-200",
+      "disewa": "bg-blue-50 text-blue-700 border border-blue-200",
+      "maintenance": "bg-amber-50 text-amber-700 border border-amber-200"
+    },
+    "forbidden_colors": ["#1B93A4", "Teal Green", "Teal Blue"]
+  },
+  "visual_enhancers": {
+    "shadows": "Use soft, diffuse shadows (shadow-sm, shadow-[0_2px_10px_rgba(0,0,0,0.04)]) instead of harsh drop shadows.",
+    "borders": "1px solid borders with 40-60% opacity for a crisp, cardless/light-card aesthetic.",
+    "radii": "rounded-xl for main cards/widgets, rounded-lg for buttons and inputs.",
+    "spacing": "Generous padding. Use p-6 or p-8 inside containers with borders to avoid text collision and provide breathing room."
+  },
+  "layouts_and_grids": {
+    "dashboard_grid": "Bento-style grid. grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6. Summary metrics take col-span-1. Charts take col-span-2. Recent lists take col-span-2 or 4.",
+    "navigation": "Mobile-first responsive. On desktop: Fixed left sidebar (w-64) with white background and right border. On mobile: Sticky top header with hamburger menu opening a Shadcn Sheet/Drawer.",
+    "page_container": "Flex column, taking remaining width. Add px-4 sm:px-6 lg:px-8 py-8 for main content area."
+  },
+  "component_patterns": {
+    "auth": "Clean centered card layout for JWT Email+Password login. Title: 'Masuk ke ARMI Rental'.",
+    "whatsapp_buttons": "Use clear green CTA buttons with WhatsApp icon for deep links (wa.me/...). Style: bg-green-500 hover:bg-green-600 text-white rounded-lg flex items-center gap-2 px-4 py-2.",
+    "data_tables": "Shadcn Table. Clean rows with hover:bg-slate-50. Status pills in a dedicated column.",
+    "forms": "Shadcn Forms, Inputs, Selects. Auto-calculate total price on the frontend before submitting rental creation. Prevent double booking logic clearly displayed.",
+    "calendar": "Shadcn Calendar for date range picking in reports and rental dates.",
+    "icons": "Use @phosphor-icons/react for dense dashboard clarity (install via yarn add @phosphor-icons/react) or fallback to lucide-react."
+  },
+  "motion": {
+    "interactions": "Subtle translate-y on hover for clickable cards (-translate-y-1). Transition colors on hover (transition-colors duration-200).",
+    "loading": "Use skeleton loaders (Shadcn Skeleton) for dashboard widgets and tables while fetching data.",
+    "toasts": "Use Sonner for success/error notifications (e.g., 'Kendaraan berhasil ditambahkan', 'Booking bentrok!')."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text, especially small labels, meets minimum 4.5:1 contrast ratio against backgrounds.",
+    "focus": "focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 on all interactive elements.",
+    "test_ids": "All interactive and key informational elements MUST include a data-testid attribute (e.g., data-testid='login-submit-button', data-testid='vehicle-status-filter', data-testid='revenue-total')."
+  },
+  "media": {
+    "image_urls": {
+      "vehicles": [
+        "https://images.unsplash.com/photo-1774283119048-0bf3a2e69027?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwxfHx3aGl0ZSUyMGx1eHVyeSUyMFNVViUyMHNpZGUlMjB2aWV3fGVufDB8fHx8MTc4ODE0NjY5NXww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1533630217389-3a5e4dff5683?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzl8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBjYXIlMjBpbnRlcmlvciUyMGRhc2hib2FyZHxlbnwwfHx8fDE3ODgxNDY2OTV8MA&ixlib=rb-4.1.0&q=85"
+      ],
+      "customers": [
+        "https://images.pexels.com/photos/7144213/pexels-photo-7144213.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "https://images.pexels.com/photos/7144209/pexels-photo-7144209.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ]
+    },
+    "instructions": "Use these placeholder images for Vehicle CRUD photo upload previews, dashboard recent rentals, and customer profile avatars. Never use raw placeholder.com text."
+  },
+  "language_map": {
+    "dashboard": "Beranda",
+    "vehicles": "Kendaraan",
+    "total_vehicles": "Total Kendaraan",
+    "available": "Tersedia",
+    "rented": "Disewa",
+    "maintenance": "Maintenance",
+    "active_bookings": "Booking Aktif",
+    "current_month_revenue": "Pendapatan Bulan Berjalan",
+    "recent_rentals": "Rental Terbaru",
+    "returning_today": "Kendaraan Kembali Hari Ini",
+    "customers": "Pelanggan",
+    "reports": "Laporan",
+    "add_vehicle": "Tambah Kendaraan",
+    "search": "Cari Kendaraan...",
+    "status": "Status",
+    "login_title": "Masuk",
+    "email": "Email",
+    "password": "Kata Sandi",
+    "login_button": "Masuk ke Sistem"
+  },
+  "universal_guidelines_for_main_agent": [
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Use sonner for toasts, located in /app/src/components/ui/sonner.jsx.",
+    "Do NOT apply universal transition like 'transition: all'. Apply to specific properties like 'transition-colors' or 'transition-transform'.",
+    "Do NOT center align the app container (.App { text-align: center; }). Keep natural left-aligned reading flow.",
+    "Never use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons. Use proper SVG icons.",
+    "Ensure the UI uses 2-3x more spacing (p-6, p-8) than usual to avoid the cramped 'AI slop' look.",
+    "For interactions, always define explicit hover, active, and focus states.",
+    "Create depth using z-index hierarchy, subtle borders, and soft shadows rather than flat 2D color blocking.",
+    "Do NOT use complete transparent backgrounds for headers, overlays, or dropdowns. Ensure they have a solid or highly opaque blurred background.",
+    "Ensure ALL UI components (.js files) follow the React functional component structure."
+  ]
+}
