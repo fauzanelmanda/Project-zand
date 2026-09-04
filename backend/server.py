@@ -10,12 +10,13 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta, date, time
 import logging
 import uuid
 import jwt
 import bcrypt
 import requests
+import math
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -161,12 +162,22 @@ class CustomerInput(BaseModel):
 class RentalInput(BaseModel):
     customer_id: str
     vehicle_id: str
+    tipe_sewa: str = "Harian"
     tanggal_mulai: str  # YYYY-MM-DD
     tanggal_kembali: str
+    waktu_mulai: Optional[str] = None  # HH:MM (24 Jam)
+    waktu_kembali: Optional[str] = None
     deposit: float = 0
     status_pembayaran: str = "Belum bayar"
     status_rental: str = "Booking"
     catatan: Optional[str] = ""
+
+    @field_validator("tipe_sewa")
+    @classmethod
+    def valid_tipe(cls, v):
+        if v not in ("Harian", "24 Jam"):
+            raise ValueError("Tipe sewa tidak valid")
+        return v
 
     @field_validator("tanggal_mulai", "tanggal_kembali")
     @classmethod
@@ -175,6 +186,17 @@ class RentalInput(BaseModel):
             datetime.strptime(v, "%Y-%m-%d")
         except (ValueError, TypeError):
             raise ValueError("Format tanggal tidak valid (gunakan YYYY-MM-DD)")
+        return v
+
+    @field_validator("waktu_mulai", "waktu_kembali")
+    @classmethod
+    def valid_time(cls, v):
+        if v in (None, ""):
+            return v
+        try:
+            datetime.strptime(v, "%H:%M")
+        except (ValueError, TypeError):
+            raise ValueError("Format waktu tidak valid (gunakan HH:MM)")
         return v
 
 
@@ -216,29 +238,43 @@ async def next_transaksi_id() -> str:
     return f"TRX-{ym}-{doc['seq']:04d}"
 
 
-def compute_rental(vehicle_price: float, start: str, end: str, deposit: float):
-    d1 = parse_date(start)
-    d2 = parse_date(end)
-    days = (d2 - d1).days
-    if days <= 0:
-        days = 1
-    subtotal = days * vehicle_price
-    total = subtotal
-    return days, subtotal, total
+def rental_interval(tipe_sewa, tm, tk, wm=None, wk=None):
+    """Return (start_dt, end_dt) occupancy interval for overlap detection."""
+    d1 = parse_date(tm)
+    d2 = parse_date(tk)
+    if tipe_sewa == "24 Jam":
+        s = datetime.combine(d1, datetime.strptime(wm or "00:00", "%H:%M").time())
+        e = datetime.combine(d2, datetime.strptime(wk or "00:00", "%H:%M").time())
+    else:
+        # Harian: inclusive calendar days -> occupies through end of tanggal_kembali
+        s = datetime.combine(d1, time(0, 0))
+        e = datetime.combine(d2, time(0, 0)) + timedelta(days=1)
+    return s, e
 
 
-async def date_overlap_exists(vehicle_id: str, start: str, end: str, exclude_id: Optional[str] = None):
-    s = parse_date(start)
-    e = parse_date(end)
+def compute_rental(vehicle_price, tipe_sewa, tm, tk, wm=None, wk=None):
+    if tipe_sewa == "24 Jam":
+        s, e = rental_interval("24 Jam", tm, tk, wm, wk)
+        hours = (e - s).total_seconds() / 3600
+        units = max(math.ceil(hours / 24), 1) if hours > 0 else 1
+    else:
+        units = max((parse_date(tk) - parse_date(tm)).days + 1, 1)
+    subtotal = units * vehicle_price
+    return units, subtotal, subtotal
+
+
+async def date_overlap_exists(vehicle_id, tipe_sewa, tm, tk, wm=None, wk=None, exclude_id=None):
+    ns, ne = rental_interval(tipe_sewa, tm, tk, wm, wk)
     query = {"vehicle_id": vehicle_id, "status_rental": {"$in": ["Booking", "Aktif"]}}
     if exclude_id:
         query["id"] = {"$ne": exclude_id}
     existing = await db.rentals.find(query).to_list(1000)
     for r in existing:
-        rs = parse_date(r["tanggal_mulai"])
-        re = parse_date(r["tanggal_kembali"])
-        # overlap if start < existing_end and existing_start < end
-        if s < re and rs < e:
+        rs, re = rental_interval(
+            r.get("tipe_sewa", "Harian"), r["tanggal_mulai"], r["tanggal_kembali"],
+            r.get("waktu_mulai"), r.get("waktu_kembali"),
+        )
+        if ns < re and rs < ne:
             return True
     return False
 
@@ -266,6 +302,9 @@ async def login(data: LoginInput, request: Request, response: Response):
         locked_until = datetime.fromisoformat(attempt["locked_until"])
         if locked_until > now:
             raise HTTPException(status_code=429, detail="Terlalu banyak percobaan. Coba lagi dalam 15 menit.")
+        # Lock window expired -> reset the counter
+        await db.login_attempts.delete_one({"identifier": identifier})
+        attempt = None
 
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(data.password, user["password_hash"]):
@@ -478,17 +517,30 @@ async def create_rental(data: RentalInput, user: dict = Depends(get_current_user
     customer = await db.customers.find_one({"id": data.customer_id})
     if not customer:
         raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
-    if parse_date(data.tanggal_kembali) <= parse_date(data.tanggal_mulai):
-        raise HTTPException(status_code=400, detail="Tanggal kembali harus setelah tanggal mulai")
+
+    if data.tipe_sewa == "24 Jam":
+        if not data.waktu_mulai or not data.waktu_kembali:
+            raise HTTPException(status_code=400, detail="Waktu mulai dan berakhir wajib diisi untuk sewa 24 Jam")
+        s, e = rental_interval("24 Jam", data.tanggal_mulai, data.tanggal_kembali, data.waktu_mulai, data.waktu_kembali)
+        if e <= s:
+            raise HTTPException(status_code=400, detail="Waktu berakhir harus setelah waktu mulai")
+    else:
+        if parse_date(data.tanggal_kembali) < parse_date(data.tanggal_mulai):
+            raise HTTPException(status_code=400, detail="Tanggal kembali tidak boleh sebelum tanggal mulai")
+
     if data.status_rental in ("Booking", "Aktif"):
-        if await date_overlap_exists(data.vehicle_id, data.tanggal_mulai, data.tanggal_kembali):
-            raise HTTPException(status_code=409, detail="Booking bentrok! Kendaraan sudah dibooking pada rentang tanggal tersebut")
-    days, subtotal, total = compute_rental(vehicle["harga_per_hari"], data.tanggal_mulai, data.tanggal_kembali, data.deposit)
+        if await date_overlap_exists(data.vehicle_id, data.tipe_sewa, data.tanggal_mulai,
+                                     data.tanggal_kembali, data.waktu_mulai, data.waktu_kembali):
+            raise HTTPException(status_code=409, detail="Booking bentrok! Kendaraan sudah dibooking pada rentang waktu tersebut")
+
+    units, subtotal, total = compute_rental(vehicle["harga_per_hari"], data.tipe_sewa,
+                                            data.tanggal_mulai, data.tanggal_kembali,
+                                            data.waktu_mulai, data.waktu_kembali)
     doc = data.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["transaksi_id"] = await next_transaksi_id()
     doc["harga_per_hari"] = vehicle["harga_per_hari"]
-    doc["jumlah_hari"] = days
+    doc["jumlah_hari"] = units
     doc["subtotal"] = subtotal
     doc["total"] = total
     doc["created_at"] = now_iso()
@@ -516,8 +568,9 @@ async def update_rental_status(rental_id: str, data: RentalStatusUpdate, user: d
         if data.status_rental not in ("Booking", "Aktif", "Selesai", "Dibatalkan"):
             raise HTTPException(status_code=400, detail="Status rental tidak valid")
         if data.status_rental in ("Booking", "Aktif") and r["status_rental"] not in ("Booking", "Aktif"):
-            if await date_overlap_exists(r["vehicle_id"], r["tanggal_mulai"], r["tanggal_kembali"], exclude_id=rental_id):
-                raise HTTPException(status_code=409, detail="Booking bentrok! Kendaraan sudah dibooking pada rentang tanggal tersebut")
+            if await date_overlap_exists(r["vehicle_id"], r.get("tipe_sewa", "Harian"), r["tanggal_mulai"],
+                                         r["tanggal_kembali"], r.get("waktu_mulai"), r.get("waktu_kembali"), exclude_id=rental_id):
+                raise HTTPException(status_code=409, detail="Booking bentrok! Kendaraan sudah dibooking pada rentang waktu tersebut")
         update["status_rental"] = data.status_rental
     if data.status_pembayaran:
         if data.status_pembayaran not in ("Belum bayar", "DP", "Lunas"):
@@ -694,26 +747,29 @@ async def seed():
         return (today + timedelta(days=offset)).strftime("%Y-%m-%d")
 
     rentals_data = [
-        {"cid": 0, "vid": 0, "start": ds(-2), "end": ds(0), "pay": "Lunas", "status": "Aktif", "deposit": 200000},
-        {"cid": 1, "vid": 1, "start": ds(-1), "end": ds(2), "pay": "DP", "status": "Aktif", "deposit": 300000},
-        {"cid": 2, "vid": 4, "start": ds(-10), "end": ds(-7), "pay": "Lunas", "status": "Selesai", "deposit": 500000},
-        {"cid": 3, "vid": 5, "start": ds(3), "end": ds(6), "pay": "DP", "status": "Booking", "deposit": 200000},
-        {"cid": 0, "vid": 6, "start": ds(-20), "end": ds(-18), "pay": "Lunas", "status": "Selesai", "deposit": 400000},
+        {"cid": 0, "vid": 0, "tipe": "Harian", "start": ds(-2), "end": ds(0), "pay": "Lunas", "status": "Aktif", "deposit": 200000},
+        {"cid": 1, "vid": 1, "tipe": "24 Jam", "start": ds(-1), "end": ds(0), "wm": "10:00", "wk": "10:00", "pay": "DP", "status": "Aktif", "deposit": 300000},
+        {"cid": 2, "vid": 4, "tipe": "Harian", "start": ds(-10), "end": ds(-8), "pay": "Lunas", "status": "Selesai", "deposit": 500000},
+        {"cid": 3, "vid": 5, "tipe": "Harian", "start": ds(3), "end": ds(5), "pay": "DP", "status": "Booking", "deposit": 200000},
+        {"cid": 0, "vid": 6, "tipe": "24 Jam", "start": ds(-20), "end": ds(-18), "wm": "09:00", "wk": "09:00", "pay": "Lunas", "status": "Selesai", "deposit": 400000},
     ]
     count = 0
     for rd in rentals_data:
         veh = vehicles[rd["vid"]]
-        days, subtotal, total = compute_rental(veh["harga_per_hari"], rd["start"], rd["end"], rd["deposit"])
+        units, subtotal, total = compute_rental(veh["harga_per_hari"], rd["tipe"], rd["start"], rd["end"], rd.get("wm"), rd.get("wk"))
         count += 1
         doc = {
             "id": str(uuid.uuid4()),
             "transaksi_id": f"TRX-{datetime.now().strftime('%Y%m')}-{count:04d}",
             "customer_id": cids[rd["cid"]],
             "vehicle_id": vids[rd["vid"]],
+            "tipe_sewa": rd["tipe"],
             "tanggal_mulai": rd["start"],
             "tanggal_kembali": rd["end"],
+            "waktu_mulai": rd.get("wm"),
+            "waktu_kembali": rd.get("wk"),
             "harga_per_hari": veh["harga_per_hari"],
-            "jumlah_hari": days,
+            "jumlah_hari": units,
             "subtotal": subtotal,
             "deposit": rd["deposit"],
             "total": total,

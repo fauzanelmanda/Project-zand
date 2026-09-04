@@ -1,0 +1,59 @@
+{
+  "summary": "Iteration 2 focused on the NEW rental-type / confirmation-flow / Booking-lifecycle features plus a light regression. Backend: 68 pytest cases (existing regression suite + new /app/backend/tests/test_rental_types.py with 20 cases) -> 68/68 passing. Verified Harian inclusive day math (1->3 Jun = 3 units, same-day = 1 unit, end<start = 400), 24 Jam exact-duration math (24h = 1 unit, 25h = 2 units), 24 Jam validation (end<=start = 400, missing times = 400, invalid tipe_sewa = 422), double-booking 409 for Harian / 24 Jam / MIXED (both directions), back-to-back 24 Jam allowed, Booking->Aktif preserves customer/vehicle/dates/total/deposit/payment and sets vehicle Disewa, Cancel -> Dibatalkan frees availability, re-activating a cancelled rental over a live booking now correctly returns 409 (iteration_1 bypass bug FIXED), customer history exposes tipe_sewa/jumlah_hari with no _id. Frontend (Playwright, desktop 1920x1080 + mobile 390x844): login, Harian form calc box '3 hari' / Rp 900.000, confirmation modal 'Order berhasil dibuat' with both buttons (rental created only after choosing), Booking path -> Booking badge + vehicle stays Tersedia + toast, Aktif path -> Aktif + vehicle Disewa + toast, dashboard counts update, 24 Jam form shows 2 datetime-local inputs with '1 × 24 Jam' / Rp 300.000, invalid 24 Jam range shows red message and disables 'Buat Rental' (also for equal start/end), MIXED overlap rejected with 'Booking bentrok!' toast, Harian overlap rejected, 'Mulai Rental' confirm dialog -> Aktif + vehicle Disewa with data preserved, 'Batalkan' confirm -> Dibatalkan + dates re-bookable + hidden from calendar, persistence after page reload, Calendar month navigation and per-month scoping (iteration_1 calendar-scope bug FIXED), customer detail history shows type/duration, Reports/Vehicles/Dashboard regression OK. Vehicle photos are now real, distinct car images (iteration_1 image bug FIXED). No new functional defects found; only minor/low-priority observations below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/login", "issue": "login_attempts.count is never reset when a lockout expires. After 5 failures the identifier is locked 15 min; once the lock expires the counter is still >=5, so the very next failed attempt re-locks for another 15 min indefinitely. Reset count (or delete the doc) once locked_until has passed."},
+      {"endpoint": "POST /api/auth/login", "issue": "Failure counters are keyed only by email (no IP component) and are created for unknown emails too, so anyone can keep a known admin address permanently locked out (DoS) and unknown-email probing pollutes the collection. Consider identifier = email+IP and a TTL index."},
+      {"endpoint": "POST /api/rentals (Harian)", "issue": "Business rule to confirm: because Harian occupies the whole tanggal_kembali day, a same-day handover (return day == next rental's start day) is rejected with 409. Intentional? If same-day turnaround should be allowed the interval end must be the return day 00:00 for Harian."},
+      {"endpoint": "GET /api/dashboard & /api/reports", "issue": "Still unchanged from iteration_1: revenue includes rentals in 'Booking' status (unrealised income) and the 6-month chart is built with i*30-day arithmetic (test passes today but can duplicate/skip a month label on some dates)."},
+      {"endpoint": "N/A (server.py)", "issue": "CORS_ORIGINS defaults to '*' with allow_credentials=True (playbook requires explicit origins when credentials are allowed)."},
+      {"endpoint": "N/A (server.py)", "issue": "Still no PUT/PATCH to edit an existing rental (dates/type/customer/vehicle); only status changes are possible. A user who picks the wrong tipe_sewa must delete and recreate."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Rental form (Harian + 24 Jam) and Reports custom range", "issues": ["Native browser date/datetime pickers are still used (<input type=date> / <input type=datetime-local>), rendering US 'mm/dd/yyyy, --:--' placeholders inside an all-Bahasa-Indonesia UI instead of the shadcn Calendar component. Same finding as iteration_1, unresolved."]},
+      {"screen": "Customer detail - Riwayat Rental", "issues": ["24 Jam entries show only dates ('20 Mei 2027 - 21 Mei 2027 · 1 × 24 Jam'); the start/end times are omitted, unlike the rental list card which shows 10:00 → 10:00. Use formatPeriode for consistency."]},
+      {"screen": "Layout mobile menu (Sheet)", "issues": ["Iteration_1 a11y console warning about a missing DialogTitle in the mobile nav sheet was not re-verified in this run; re-check if it was fixed."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_rental_types.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_overlap_bypass.py",
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/cleanup_frontend_qa.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Reset the login_attempts counter after a lockout window expires (currently one failed attempt re-locks the account forever).",
+    "Key brute-force counters by email+IP (and add a TTL) so an attacker cannot permanently lock the admin email.",
+    "Confirm the intended Harian turnaround rule: same-day handover (new start == existing tanggal_kembali) is currently a 409 conflict.",
+    "Replace native date/datetime inputs with the shadcn Calendar/time control for locale consistency (carried over from iteration_1).",
+    "Show start/end times for 24 Jam rentals in the customer detail history (use formatPeriode).",
+    "Optional: exclude 'Booking' rentals from realised revenue and fix the 6-month chart month arithmetic."
+  ],
+  "critical_code_review_comments": [
+    "server.py login(): the lockout branch only checks locked_until; the failure counter is never cleared when the window expires, so any single later failure sets locked_until again (permanent soft-lock). Delete/zero the document after expiry.",
+    "rental_interval() Harian end = tanggal_kembali + 1 day makes same-day handovers impossible; document or parameterise this business rule.",
+    "server.py is ~815 lines and still one module; split routers (auth/vehicles/customers/rentals/reports/seed) per the >700-line guideline.",
+    "compute_rental() uses ceil(hours/24) for 24 Jam - a 24h01m rental is charged 2 units. Confirm grace-period expectation with the product owner.",
+    "Frontend Rentals.js is 561 lines and holds the form, the confirmation modal and 3 AlertDialogs; extracting RentalForm/RentalCard would improve maintainability."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_rental_types.py",
+    "/app/backend/tests/cleanup_frontend_qa.py"
+  ],
+  "success_rate": {"backend": "100% (68/68 pytest cases)", "frontend": "100% of the new rental-type / confirmation / Booking-lifecycle flows passed; only design nits remain"},
+  "seed_data_creation": "No permanent data added. Test data created and removed: pytest fixtures create a dedicated vehicle 'TEST_Merek TipeSewaQA (QA 24 JAM)' + customer 'TEST_Pelanggan Tipe' with 2027 rentals (auto-deleted in teardown); Playwright created 5 rentals with 2027 dates on Honda Brio / Fortuner / Pajero, all deleted by /app/backend/tests/cleanup_frontend_qa.py. DB verified back to baseline: 7 vehicles, 4 customers, 5 rentals, tersedia 4 / disewa 2 / maintenance 1.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "fauzan.elmanda@gmail.com / admin123 (from /app/memory/test_credentials.md) - valid; bcrypt $2b$ hash confirmed, httpOnly+Secure+SameSite=None access_token cookie set on login, 429 lockout after 5 failures confirmed.",
+  "context_for_next_testing_agent": "App routes are Bahasa Indonesian: / (dashboard), /kendaraan, /pelanggan, /rental, /kalender, /laporan - login redirects to '/' (do NOT wait for **/dashboard**). Backend suite: cd /app/backend && python -m pytest tests/ -q (68 tests, pytest.ini forces -n 2 --dist loadscope, so module/class-scoped fixtures are instantiated per worker - keep each test class self-contained). Auth tests now use random throwaway emails for wrong-password/brute-force cases; NEVER brute-force the real admin email or it locks for 15 min (and the counter never resets, see backend_issues). Tests that pick vehicles/customers use index [-1] (oldest, seeded) because parallel workers create/delete newer QA vehicles. After UI testing run python /app/backend/tests/cleanup_frontend_qa.py to delete 2027-dated QA rentals and restore seeded vehicle statuses. Iteration_1 bugs verified FIXED: malformed-date 400s, reports invalid params 400, status-transition overlap bypass (409), transaksi_id counter collection, brute-force lockout, calendar month scoping, distinct car photos. Still open: native date pickers, revenue includes Booking, no rental edit endpoint, CORS '*'.",
+  "flaky_tests": [],
+  "rca_of_the_issue": "No product defects reproduced this iteration. Three initial pytest failures were stale iteration_1 expectations against the new inclusive-day Harian model (jumlah_hari 3 -> 4 for a 3-day span, same-day now valid = 1 hari, adjacent booking must start end+1 day) and two were parallel-worker races (vehicle index [0] deleted by another worker; accumulated login-attempt lockout on shared throwaway emails). All were test-side and fixed in place. The one Playwright failure was a selector bug on my side ('1 Mei 2027' also matched '21 Mei 2027 10:00'); re-targeting by transaksi_id passed."
+}

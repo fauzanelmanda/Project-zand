@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api, { formatApiErrorDetail } from "@/lib/api";
-import { formatTanggal, formatRupiah, waLink, msgKontak } from "@/lib/format";
+import { formatTanggal, formatRupiah, formatDurasi, formatPeriode, waLink, msgKontak } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -221,7 +221,7 @@ export default function Customers() {
                     <div key={r.id} className="flex items-center justify-between rounded-lg border border-slate-100 p-3">
                       <div>
                         <div className="text-sm font-medium text-slate-800">{r.vehicle?.merek} {r.vehicle?.tipe}</div>
-                        <div className="text-xs text-slate-500">{formatTanggal(r.tanggal_mulai)} - {formatTanggal(r.tanggal_kembali)} · {formatRupiah(r.total)}</div>
+                        <div className="text-xs text-slate-500">{formatPeriode(r)} · {formatDurasi(r)} · {formatRupiah(r.total)}</div>
                       </div>
                       <StatusBadge status={r.status_rental} type="rental" />
                     </div>

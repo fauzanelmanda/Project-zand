@@ -9,6 +9,18 @@ export const formatTanggal = (s) => {
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 };
 
+export const formatDurasi = (r) => {
+  if (r.tipe_sewa === "24 Jam") return `${r.jumlah_hari} × 24 Jam`;
+  return `${r.jumlah_hari} hari`;
+};
+
+export const formatPeriode = (r) => {
+  if (r.tipe_sewa === "24 Jam") {
+    return `${formatTanggal(r.tanggal_mulai)} ${r.waktu_mulai || ""} → ${formatTanggal(r.tanggal_kembali)} ${r.waktu_kembali || ""}`;
+  }
+  return `${formatTanggal(r.tanggal_mulai)} → ${formatTanggal(r.tanggal_kembali)}`;
+};
+
 export const toWaNumber = (wa) => {
   let n = (wa || "").replace(/[^0-9]/g, "");
   if (n.startsWith("0")) n = "62" + n.slice(1);
@@ -24,8 +36,9 @@ export const msgKonfirmasi = (r) =>
   `Halo ${r.customer?.nama}, booking Anda telah dikonfirmasi.\n\n` +
   `No. Transaksi: ${r.transaksi_id}\n` +
   `Kendaraan: ${r.vehicle?.merek} ${r.vehicle?.tipe} (${r.vehicle?.nomor_polisi})\n` +
-  `Tanggal: ${formatTanggal(r.tanggal_mulai)} s/d ${formatTanggal(r.tanggal_kembali)}\n` +
-  `Durasi: ${r.jumlah_hari} hari\n` +
+  `Tipe Sewa: ${r.tipe_sewa || "Harian"}\n` +
+  `Periode: ${formatPeriode(r)}\n` +
+  `Durasi: ${formatDurasi(r)}\n` +
   `Total: ${formatRupiah(r.total)}\n\nTerima kasih telah mempercayai ARMI Rental.`;
 
 export const msgPengingatBayar = (r) =>

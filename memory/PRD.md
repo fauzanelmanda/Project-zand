@@ -21,6 +21,14 @@ Professional Indonesian (Bahasa Indonesia UI) mobile-first web app to manage a c
 - Reports: total rental/pendapatan/aktif/selesai/dibatalkan with Today/Week/Month/Custom filters.
 - WhatsApp deep links: konfirmasi booking, pengingat pembayaran, pengingat pengembalian, kontak.
 
+## Implemented (2026-09-04)
+- Rental type **Harian** (inclusive day count, e.g. 1→3 Sep = 3 hari) & **24 Jam** (date+time, exact `N × 24 Jam` = ceil(hours/24)), stored on rental and shown in form/list/calendar/customer history.
+- Post-creation confirmation modal: "Order berhasil dibuat" → 🟢 Aktif Sekarang (rental Aktif + vehicle Disewa) or 🔵 Simpan sebagai Booking (vehicle stays Tersedia, dates still locked).
+- Booking lifecycle: "Mulai Rental" (Booking→Aktif, vehicle Disewa, data preserved) and "Batalkan" (→Dibatalkan, frees availability, hidden from calendar) with confirm dialogs.
+- Double-booking prevention now datetime-interval based, covering Harian, 24 Jam, and MIXED overlaps (409).
+- Fixed auth soft-lock: brute-force counter resets after the 15-min window expires. Customer history now shows 24 Jam times via formatPeriode.
+- Verified by testing agent: backend 68/68 pytest, frontend 100% of new flows.
+
 ## Implemented (2026-08-31)
 - Full MVP built and tested end-to-end (backend 44/48 pytest, frontend all core flows).
 - Fixed post-test defects: malformed-date validation (400/422), double-booking bypass on status change (409), email-based brute-force lockout (proxy-safe), collision-free transaksi_id (counter collection), calendar month scoping, mobile Sheet a11y title, distinct per-vehicle car photos.

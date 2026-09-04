@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import api from "@/lib/api";
-import { formatTanggal, formatRupiah } from "@/lib/format";
+import { formatTanggal, formatRupiah, formatDurasi, formatPeriode } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -46,7 +46,7 @@ export default function CalendarPage() {
     for (let d = 1; d <= daysInMonth; d++) {
       const date = new Date(year, month, d);
       const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      const bookings = active.filter((r) => r.tanggal_mulai <= dateStr && dateStr < r.tanggal_kembali);
+      const bookings = active.filter((r) => r.tanggal_mulai <= dateStr && dateStr <= r.tanggal_kembali);
       cells.push({ d, dateStr, bookings, isToday: date.toDateString() === new Date().toDateString() });
     }
     return { days: cells, monthLabel: `${monthNames[month]} ${year}` };
@@ -127,7 +127,7 @@ export default function CalendarPage() {
             <div key={r.id} className="flex flex-col gap-2 rounded-lg border border-slate-100 p-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <div className="font-medium text-slate-800">{r.vehicle?.merek} {r.vehicle?.tipe}</div>
-                <div className="text-xs text-slate-500">{r.customer?.nama} · {formatTanggal(r.tanggal_mulai)} → {formatTanggal(r.tanggal_kembali)}</div>
+                <div className="text-xs text-slate-500">{r.customer?.nama} · {formatPeriode(r)} · {formatDurasi(r)}</div>
               </div>
               <StatusBadge status={r.status_rental} type="rental" />
             </div>
