@@ -12,6 +12,7 @@ import {
   CalendarClock,
   Wallet,
   Clock,
+  AlertCircle,
 } from "lucide-react";
 import {
   BarChart,
@@ -62,13 +63,14 @@ export default function Dashboard() {
         <p className="mt-1 text-sm text-slate-500">Ringkasan operasional rental Anda hari ini.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-4">
         <StatCard testid="stat-total-vehicles" icon={Car} label="Total Kendaraan" value={data.total_vehicles} tint="bg-slate-100 text-slate-700" />
         <StatCard testid="stat-tersedia" icon={CheckCircle2} label="Tersedia" value={data.tersedia} tint="bg-emerald-50 text-emerald-600" />
         <StatCard testid="stat-disewa" icon={KeyRound} label="Sedang Disewa" value={data.disewa} tint="bg-blue-50 text-blue-600" />
         <StatCard testid="stat-maintenance" icon={Wrench} label="Maintenance" value={data.maintenance} tint="bg-amber-50 text-amber-600" />
         <StatCard testid="stat-active-bookings" icon={CalendarClock} label="Booking Aktif" value={data.active_bookings} tint="bg-violet-50 text-violet-600" />
         <StatCard testid="stat-revenue" icon={Wallet} label="Pendapatan Bulan Ini" value={formatRupiah(data.revenue)} tint="bg-blue-50 text-blue-600" />
+        <StatCard testid="stat-outstanding" icon={AlertCircle} label="Total Sisa Tagihan" value={formatRupiah(data.outstanding)} tint="bg-red-50 text-red-600" />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

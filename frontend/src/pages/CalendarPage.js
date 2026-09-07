@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const dayNames = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -19,13 +20,26 @@ const statusDot = {
 
 export default function CalendarPage() {
   const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [vehicleFilter, setVehicleFilter] = useState("Semua");
+  const [tipeFilter, setTipeFilter] = useState("Semua");
+  const [statusFilter, setStatusFilter] = useState("Semua");
 
   const { data: rentals = [], isLoading } = useQuery({
     queryKey: ["rentals", "Semua"],
     queryFn: async () => (await api.get("/rentals", { params: { status: "Semua" } })).data,
   });
+  const { data: vehicles = [] } = useQuery({
+    queryKey: ["vehicles-all"],
+    queryFn: async () => (await api.get("/vehicles")).data,
+  });
 
-  const active = useMemo(() => rentals.filter((r) => r.status_rental !== "Dibatalkan"), [rentals]);
+  const active = useMemo(() => rentals.filter((r) => {
+    if (r.status_rental === "Dibatalkan") return false;
+    if (vehicleFilter !== "Semua" && r.vehicle_id !== vehicleFilter) return false;
+    if (tipeFilter !== "Semua" && (r.tipe_sewa || "Harian") !== tipeFilter) return false;
+    if (statusFilter !== "Semua" && r.status_rental !== statusFilter) return false;
+    return true;
+  }), [rentals, vehicleFilter, tipeFilter, statusFilter]);
 
   const monthActive = useMemo(() => {
     const year = cursor.getFullYear();
@@ -66,6 +80,34 @@ export default function CalendarPage() {
           <span className="min-w-[160px] text-center font-heading font-semibold text-slate-800" data-testid="cal-month">{monthLabel}</span>
           <Button variant="outline" size="icon" data-testid="cal-next" onClick={() => move(1)}><ChevronRight className="h-4 w-4" /></Button>
         </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Select value={vehicleFilter} onValueChange={setVehicleFilter}>
+          <SelectTrigger data-testid="cal-filter-vehicle" className="h-11 sm:w-64"><SelectValue placeholder="Kendaraan" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Semua">Semua Kendaraan</SelectItem>
+            {vehicles.map((v) => <SelectItem key={v.id} value={v.id}>{v.merek} {v.tipe} ({v.nomor_polisi})</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={tipeFilter} onValueChange={setTipeFilter}>
+          <SelectTrigger data-testid="cal-filter-tipe" className="h-11 sm:w-40"><SelectValue placeholder="Tipe Sewa" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Semua">Semua Tipe</SelectItem>
+            <SelectItem value="Harian">Harian</SelectItem>
+            <SelectItem value="24 Jam">24 Jam</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger data-testid="cal-filter-status" className="h-11 sm:w-40"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Semua">Semua Status</SelectItem>
+            <SelectItem value="Booking">Booking</SelectItem>
+            <SelectItem value="Aktif">Aktif</SelectItem>
+            <SelectItem value="Selesai">Selesai</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Legend */}

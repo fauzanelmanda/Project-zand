@@ -226,7 +226,7 @@ class TestBookingLifecycle:
         assert d["customer_id"] == b["customer_id"] and d["vehicle_id"] == b["vehicle_id"]
         assert d["tanggal_mulai"] == b["tanggal_mulai"] and d["tanggal_kembali"] == b["tanggal_kembali"]
         assert d["total"] == b["total"] and d["deposit"] == 50000
-        assert d["status_pembayaran"] == "DP"
+        assert d["status_pembayaran"] in ("DP", "DP / Sebagian")
         v = sess.get(f"{API}/vehicles/{fixtures['vehicle']['id']}", timeout=30).json()
         assert v["status"] == "Disewa", v["status"]
         # persisted

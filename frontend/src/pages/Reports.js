@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ClipboardList, Wallet, KeyRound, CheckCircle2, XCircle } from "lucide-react";
+import { ClipboardList, Wallet, KeyRound, CheckCircle2, XCircle, HandCoins, AlertCircle } from "lucide-react";
 
 const presets = [
   { key: "today", label: "Hari Ini" },
@@ -100,6 +100,8 @@ export default function Reports() {
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           <MetricCard testid="report-total-rental" icon={ClipboardList} label="Total Rental" value={data.total_rental} tint="bg-slate-100 text-slate-700" />
           <MetricCard testid="report-total-revenue" icon={Wallet} label="Total Pendapatan" value={formatRupiah(data.total_revenue)} tint="bg-blue-50 text-blue-600" />
+          <MetricCard testid="report-total-paid" icon={HandCoins} label="Sudah Dibayar" value={formatRupiah(data.total_paid)} tint="bg-emerald-50 text-emerald-600" />
+          <MetricCard testid="report-outstanding" icon={AlertCircle} label="Sisa Tagihan" value={formatRupiah(data.outstanding)} tint="bg-red-50 text-red-600" />
           <MetricCard testid="report-aktif" icon={KeyRound} label="Rental Aktif" value={data.aktif} tint="bg-blue-50 text-blue-600" />
           <MetricCard testid="report-selesai" icon={CheckCircle2} label="Rental Selesai" value={data.selesai} tint="bg-emerald-50 text-emerald-600" />
           <MetricCard testid="report-dibatalkan" icon={XCircle} label="Rental Dibatalkan" value={data.dibatalkan} tint="bg-red-50 text-red-600" />

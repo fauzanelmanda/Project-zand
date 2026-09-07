@@ -53,3 +53,18 @@ export const msgPengingatKembali = (r) =>
   `Terima kasih telah menggunakan ARMI Rental.`;
 
 export const msgKontak = (nama) => `Halo ${nama}, `;
+
+export const invoiceUrl = (id) => `${process.env.REACT_APP_BACKEND_URL}/api/invoices/${id}`;
+
+export const msgInvoice = (r) =>
+  `Halo ${r.customer?.nama}, berikut invoice rental Anda dari ARMI Rental.\n\n` +
+  `No. Invoice: ${r.transaksi_id}\n` +
+  `Kendaraan: ${r.vehicle?.merek} ${r.vehicle?.tipe} (${r.vehicle?.nomor_polisi})\n` +
+  `Tipe Sewa: ${r.tipe_sewa || "Harian"}\n` +
+  `Periode: ${formatPeriode(r)}\n` +
+  `Durasi: ${formatDurasi(r)}\n` +
+  `Total: ${formatRupiah(r.total)}\n` +
+  `Sudah Dibayar: ${formatRupiah(r.total_paid)}\n` +
+  `Sisa Pembayaran: ${formatRupiah(r.sisa)}\n` +
+  `Status: ${r.status_pembayaran}\n\n` +
+  `Invoice (PDF): ${invoiceUrl(r.id)}\n\nTerima kasih telah mempercayai ARMI Rental.`;

@@ -209,6 +209,50 @@ class RentalStatusUpdate(BaseModel):
     status_pembayaran: Optional[str] = None
 
 
+class RentalUpdate(BaseModel):
+    customer_id: str
+    vehicle_id: str
+    tipe_sewa: str = "Harian"
+    tanggal_mulai: str
+    tanggal_kembali: str
+    waktu_mulai: Optional[str] = None
+    waktu_kembali: Optional[str] = None
+    harga_per_hari: Optional[float] = None
+    catatan: Optional[str] = ""
+
+    @field_validator("tipe_sewa")
+    @classmethod
+    def valid_tipe(cls, v):
+        if v not in ("Harian", "24 Jam"):
+            raise ValueError("Tipe sewa tidak valid")
+        return v
+
+    @field_validator("tanggal_mulai", "tanggal_kembali")
+    @classmethod
+    def valid_date(cls, v):
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            raise ValueError("Format tanggal tidak valid (gunakan YYYY-MM-DD)")
+        return v
+
+    @field_validator("waktu_mulai", "waktu_kembali")
+    @classmethod
+    def valid_time(cls, v):
+        if v in (None, ""):
+            return v
+        try:
+            datetime.strptime(v, "%H:%M")
+        except (ValueError, TypeError):
+            raise ValueError("Format waktu tidak valid (gunakan HH:MM)")
+        return v
+
+
+class PaymentInput(BaseModel):
+    amount: float
+    catatan: Optional[str] = ""
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -279,8 +323,32 @@ async def date_overlap_exists(vehicle_id, tipe_sewa, tm, tk, wm=None, wk=None, e
     return False
 
 
+def compute_payment(total, payments):
+    paid = 0.0
+    for p in (payments or []):
+        try:
+            paid += float(p.get("amount", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    paid = round(paid, 2)
+    total = round(total or 0, 2)
+    sisa = round(max(total - paid, 0), 2)
+    if paid <= 0:
+        status = "Belum Dibayar"
+    elif paid < total:
+        status = "DP / Sebagian"
+    else:
+        status = "Lunas"
+    return paid, sisa, status
+
+
 async def enrich_rental(r: dict):
     r.pop("_id", None)
+    r.setdefault("payments", [])
+    paid, sisa, pay_status = compute_payment(r.get("total", 0), r.get("payments"))
+    r["total_paid"] = paid
+    r["sisa"] = sisa
+    r["status_pembayaran"] = pay_status
     cust = await db.customers.find_one({"id": r["customer_id"]}, {"_id": 0})
     veh = await db.vehicles.find_one({"id": r["vehicle_id"]}, {"_id": 0})
     r["customer"] = cust
@@ -543,11 +611,118 @@ async def create_rental(data: RentalInput, user: dict = Depends(get_current_user
     doc["jumlah_hari"] = units
     doc["subtotal"] = subtotal
     doc["total"] = total
+    # Initial deposit becomes the first recorded payment
+    payments = []
+    if data.deposit and data.deposit > 0:
+        payments.append({
+            "id": str(uuid.uuid4()),
+            "amount": round(min(data.deposit, total), 2),
+            "catatan": "DP / Deposit awal",
+            "tanggal": now_iso(),
+        })
+    doc["payments"] = payments
+    _, _, doc["status_pembayaran"] = compute_payment(total, payments)
     doc["created_at"] = now_iso()
     await db.rentals.insert_one(doc)
     await sync_vehicle_status(data.vehicle_id, data.status_rental)
     doc.pop("_id", None)
     return await enrich_rental(doc)
+
+
+async def release_vehicle_if_free(vehicle_id: str):
+    other = await db.rentals.find_one({"vehicle_id": vehicle_id, "status_rental": "Aktif"})
+    if not other:
+        veh = await db.vehicles.find_one({"id": vehicle_id})
+        if veh and veh.get("status") == "Disewa":
+            await db.vehicles.update_one({"id": vehicle_id}, {"$set": {"status": "Tersedia"}})
+
+
+@api_router.put("/rentals/{rental_id}")
+async def edit_rental(rental_id: str, data: RentalUpdate, user: dict = Depends(get_current_user)):
+    r = await db.rentals.find_one({"id": rental_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Rental tidak ditemukan")
+    vehicle = await db.vehicles.find_one({"id": data.vehicle_id})
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Kendaraan tidak ditemukan")
+    customer = await db.customers.find_one({"id": data.customer_id})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
+
+    if data.tipe_sewa == "24 Jam":
+        if not data.waktu_mulai or not data.waktu_kembali:
+            raise HTTPException(status_code=400, detail="Waktu mulai dan berakhir wajib diisi untuk sewa 24 Jam")
+        s, e = rental_interval("24 Jam", data.tanggal_mulai, data.tanggal_kembali, data.waktu_mulai, data.waktu_kembali)
+        if e <= s:
+            raise HTTPException(status_code=400, detail="Waktu berakhir harus setelah waktu mulai")
+    else:
+        if parse_date(data.tanggal_kembali) < parse_date(data.tanggal_mulai):
+            raise HTTPException(status_code=400, detail="Tanggal kembali tidak boleh sebelum tanggal mulai")
+
+    # Overlap check only matters for rentals that block availability
+    if r["status_rental"] in ("Booking", "Aktif"):
+        if await date_overlap_exists(data.vehicle_id, data.tipe_sewa, data.tanggal_mulai,
+                                     data.tanggal_kembali, data.waktu_mulai, data.waktu_kembali, exclude_id=rental_id):
+            raise HTTPException(status_code=409, detail="Booking bentrok! Kendaraan sudah dibooking pada rentang waktu tersebut")
+
+    harga = data.harga_per_hari if (data.harga_per_hari and data.harga_per_hari > 0) else vehicle["harga_per_hari"]
+    units, subtotal, total = compute_rental(harga, data.tipe_sewa, data.tanggal_mulai,
+                                            data.tanggal_kembali, data.waktu_mulai, data.waktu_kembali)
+
+    old_vehicle = r["vehicle_id"]
+    payments = r.get("payments", [])
+    _, _, pay_status = compute_payment(total, payments)
+
+    update = {
+        "customer_id": data.customer_id,
+        "vehicle_id": data.vehicle_id,
+        "tipe_sewa": data.tipe_sewa,
+        "tanggal_mulai": data.tanggal_mulai,
+        "tanggal_kembali": data.tanggal_kembali,
+        "waktu_mulai": data.waktu_mulai,
+        "waktu_kembali": data.waktu_kembali,
+        "harga_per_hari": harga,
+        "jumlah_hari": units,
+        "subtotal": subtotal,
+        "total": total,
+        "status_pembayaran": pay_status,
+        "catatan": data.catatan,
+    }
+    await db.rentals.update_one({"id": rental_id}, {"$set": update})
+
+    # Keep vehicle availability consistent for ACTIVE rentals
+    if r["status_rental"] == "Aktif":
+        if old_vehicle != data.vehicle_id:
+            await release_vehicle_if_free(old_vehicle)
+            await db.vehicles.update_one({"id": data.vehicle_id}, {"$set": {"status": "Disewa"}})
+        else:
+            await db.vehicles.update_one({"id": data.vehicle_id}, {"$set": {"status": "Disewa"}})
+
+    updated = await db.rentals.find_one({"id": rental_id})
+    return await enrich_rental(updated)
+
+
+@api_router.post("/rentals/{rental_id}/payments")
+async def add_payment(rental_id: str, data: PaymentInput, user: dict = Depends(get_current_user)):
+    r = await db.rentals.find_one({"id": rental_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Rental tidak ditemukan")
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="Jumlah pembayaran harus lebih dari 0")
+    paid, sisa, _ = compute_payment(r.get("total", 0), r.get("payments", []))
+    if round(data.amount, 2) > sisa:
+        raise HTTPException(status_code=400, detail=f"Pembayaran melebihi sisa tagihan (sisa {sisa:.0f})")
+    payment = {
+        "id": str(uuid.uuid4()),
+        "amount": round(data.amount, 2),
+        "catatan": data.catatan or "Pembayaran",
+        "tanggal": now_iso(),
+    }
+    payments = r.get("payments", []) + [payment]
+    _, _, pay_status = compute_payment(r.get("total", 0), payments)
+    await db.rentals.update_one({"id": rental_id}, {"$set": {"payments": payments, "status_pembayaran": pay_status}})
+    updated = await db.rentals.find_one({"id": rental_id})
+    return await enrich_rental(updated)
 
 
 @api_router.get("/rentals/{rental_id}")
@@ -572,10 +747,6 @@ async def update_rental_status(rental_id: str, data: RentalStatusUpdate, user: d
                                          r["tanggal_kembali"], r.get("waktu_mulai"), r.get("waktu_kembali"), exclude_id=rental_id):
                 raise HTTPException(status_code=409, detail="Booking bentrok! Kendaraan sudah dibooking pada rentang waktu tersebut")
         update["status_rental"] = data.status_rental
-    if data.status_pembayaran:
-        if data.status_pembayaran not in ("Belum bayar", "DP", "Lunas"):
-            raise HTTPException(status_code=400, detail="Status pembayaran tidak valid")
-        update["status_pembayaran"] = data.status_pembayaran
     if update:
         await db.rentals.update_one({"id": rental_id}, {"$set": update})
     if data.status_rental:
@@ -595,6 +766,138 @@ async def delete_rental(rental_id: str, user: dict = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Invoice PDF (public by rental id so it is shareable)
+# ---------------------------------------------------------------------------
+def _rupiah(n):
+    return "Rp " + f"{int(round(n or 0)):,}".replace(",", ".")
+
+
+def _fmt_date(s):
+    if not s:
+        return "-"
+    try:
+        return datetime.strptime(s[:10], "%Y-%m-%d").strftime("%d %b %Y")
+    except Exception:
+        return s
+
+
+async def build_invoice_pdf(r: dict) -> bytes:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    import io
+
+    cust = await db.customers.find_one({"id": r["customer_id"]}, {"_id": 0}) or {}
+    veh = await db.vehicles.find_one({"id": r["vehicle_id"]}, {"_id": 0}) or {}
+    paid, sisa, pay_status = compute_payment(r.get("total", 0), r.get("payments", []))
+
+    blue = colors.HexColor("#2563eb")
+    slate = colors.HexColor("#334155")
+    muted = colors.HexColor("#94a3b8")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=18 * mm,
+                            leftMargin=18 * mm, rightMargin=18 * mm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Title"], textColor=blue, fontSize=20, spaceAfter=2)
+    sub = ParagraphStyle("sub", parent=styles["Normal"], textColor=muted, fontSize=9)
+    label = ParagraphStyle("label", parent=styles["Normal"], textColor=muted, fontSize=8)
+    val = ParagraphStyle("val", parent=styles["Normal"], textColor=slate, fontSize=10)
+    sec = ParagraphStyle("sec", parent=styles["Normal"], textColor=slate, fontSize=11, spaceAfter=4, spaceBefore=6, leading=14)
+
+    el = []
+    el.append(Paragraph("ARMI Rental Management", h1))
+    el.append(Paragraph("ARMI DPD SULSEL", sub))
+    el.append(Spacer(1, 8))
+
+    tipe = r.get("tipe_sewa", "Harian")
+    if tipe == "24 Jam":
+        durasi = f"{r.get('jumlah_hari', 1)} × 24 Jam"
+        periode_m = f"{_fmt_date(r['tanggal_mulai'])} {r.get('waktu_mulai') or ''}"
+        periode_k = f"{_fmt_date(r['tanggal_kembali'])} {r.get('waktu_kembali') or ''}"
+    else:
+        durasi = f"{r.get('jumlah_hari', 1)} hari"
+        periode_m = _fmt_date(r["tanggal_mulai"])
+        periode_k = _fmt_date(r["tanggal_kembali"])
+
+    meta = Table([
+        [Paragraph("No. Invoice", label), Paragraph(r.get("transaksi_id", "-"), val),
+         Paragraph("Tanggal", label), Paragraph(datetime.now().strftime("%d %b %Y"), val)],
+    ], colWidths=[70, 130, 60, 110])
+    meta.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    el.append(meta)
+    el.append(Spacer(1, 6))
+    el.append(Table([[""]], colWidths=[520], style=TableStyle([("LINEBELOW", (0, 0), (-1, -1), 1, blue)])))
+
+    el.append(Paragraph("Pelanggan", sec))
+    el.append(Table([
+        [Paragraph("Nama", label), Paragraph(cust.get("nama", "-"), val)],
+        [Paragraph("WhatsApp", label), Paragraph(cust.get("whatsapp", "-"), val)],
+        [Paragraph("Alamat", label), Paragraph(cust.get("alamat", "-") or "-", val)],
+    ], colWidths=[80, 440]))
+
+    el.append(Paragraph("Detail Rental", sec))
+    el.append(Table([
+        [Paragraph("Kendaraan", label), Paragraph(f"{veh.get('merek','')} {veh.get('tipe','')}", val),
+         Paragraph("Nomor Polisi", label), Paragraph(veh.get("nomor_polisi", "-"), val)],
+        [Paragraph("Tipe Sewa", label), Paragraph(tipe, val),
+         Paragraph("Durasi", label), Paragraph(durasi, val)],
+        [Paragraph("Mulai", label), Paragraph(periode_m, val),
+         Paragraph("Kembali", label), Paragraph(periode_k, val)],
+        [Paragraph("Tarif / hari", label), Paragraph(_rupiah(r.get("harga_per_hari", 0)), val), "", ""],
+    ], colWidths=[80, 190, 80, 170]))
+
+    el.append(Paragraph("Rincian Pembayaran", sec))
+    pay_rows = [[Paragraph("Keterangan", label), Paragraph("Jumlah", label)]]
+    pay_rows.append([Paragraph("Subtotal Sewa", val), Paragraph(_rupiah(r.get("subtotal", 0)), val)])
+    for p in r.get("payments", []):
+        pay_rows.append([Paragraph(f"Dibayar — {p.get('catatan','Pembayaran')} ({_fmt_date(p.get('tanggal',''))})", val),
+                         Paragraph("- " + _rupiah(p.get("amount", 0)), val)])
+    ptbl = Table(pay_rows, colWidths=[380, 140])
+    ptbl.setStyle(TableStyle([
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, muted),
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    el.append(ptbl)
+    el.append(Spacer(1, 6))
+
+    totals = Table([
+        [Paragraph("Grand Total", val), Paragraph(_rupiah(r.get("total", 0)), val)],
+        [Paragraph("Sudah Dibayar", val), Paragraph(_rupiah(paid), val)],
+        [Paragraph("<b>Sisa Pembayaran</b>", val), Paragraph("<b>" + _rupiah(sisa) + "</b>", val)],
+        [Paragraph("Status", val), Paragraph(pay_status, val)],
+    ], colWidths=[380, 140])
+    totals.setStyle(TableStyle([
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.5, muted),
+        ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#eff6ff")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    el.append(totals)
+
+    el.append(Spacer(1, 20))
+    el.append(Paragraph("Terima kasih telah mempercayai ARMI Rental. Semoga perjalanan Anda menyenangkan!", sub))
+    el.append(Paragraph("Hubungi kami via WhatsApp untuk pertanyaan seputar rental Anda.", sub))
+
+    doc.build(el)
+    return buf.getvalue()
+
+
+@api_router.get("/invoices/{rental_id}")
+async def invoice_pdf(rental_id: str):
+    r = await db.rentals.find_one({"id": rental_id})
+    if not r:
+        raise HTTPException(status_code=404, detail="Rental tidak ditemukan")
+    pdf = await build_invoice_pdf(r)
+    filename = f"Invoice-{r.get('transaksi_id', rental_id)}.pdf"
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename={filename}"})
+
+
+# ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 @api_router.get("/dashboard")
@@ -611,9 +914,13 @@ async def dashboard(user: dict = Depends(get_current_user)):
     month_start = now.strftime("%Y-%m")
     all_rentals = await db.rentals.find({}, {"_id": 0}).to_list(5000)
     revenue = 0
+    outstanding = 0
     for r in all_rentals:
-        if r["status_rental"] != "Dibatalkan" and r["tanggal_mulai"][:7] == month_start:
-            revenue += r.get("total", 0)
+        if r["status_rental"] != "Dibatalkan":
+            paid, sisa, _ = compute_payment(r.get("total", 0), r.get("payments", []))
+            if r["tanggal_mulai"][:7] == month_start:
+                revenue += r.get("total", 0)
+            outstanding += sisa
 
     recent = await db.rentals.find({}).sort("created_at", -1).limit(5).to_list(5)
     recent = [await enrich_rental(r) for r in recent]
@@ -648,6 +955,7 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "maintenance": maintenance,
         "active_bookings": active_bookings,
         "revenue": revenue,
+        "outstanding": outstanding,
         "recent": recent,
         "returning_today": returning_today,
         "returning_soon": returning_soon,
@@ -668,12 +976,21 @@ async def reports(start: Optional[str] = None, end: Optional[str] = None,
         rentals = [r for r in rentals if s <= parse_date(r["tanggal_mulai"]) <= e]
     total_rental = len(rentals)
     total_revenue = sum(r.get("total", 0) for r in rentals if r["status_rental"] != "Dibatalkan")
+    total_paid = 0
+    outstanding = 0
+    for r in rentals:
+        if r["status_rental"] != "Dibatalkan":
+            paid, sisa, _ = compute_payment(r.get("total", 0), r.get("payments", []))
+            total_paid += paid
+            outstanding += sisa
     aktif = sum(1 for r in rentals if r["status_rental"] == "Aktif")
     selesai = sum(1 for r in rentals if r["status_rental"] == "Selesai")
     dibatalkan = sum(1 for r in rentals if r["status_rental"] == "Dibatalkan")
     return {
         "total_rental": total_rental,
         "total_revenue": total_revenue,
+        "total_paid": total_paid,
+        "outstanding": outstanding,
         "aktif": aktif,
         "selesai": selesai,
         "dibatalkan": dibatalkan,
@@ -758,6 +1075,13 @@ async def seed():
         veh = vehicles[rd["vid"]]
         units, subtotal, total = compute_rental(veh["harga_per_hari"], rd["tipe"], rd["start"], rd["end"], rd.get("wm"), rd.get("wk"))
         count += 1
+        if rd["pay"] == "Lunas":
+            payments = [{"id": str(uuid.uuid4()), "amount": total, "catatan": "Pelunasan", "tanggal": now_iso()}]
+        elif rd["pay"] == "DP":
+            payments = [{"id": str(uuid.uuid4()), "amount": min(rd["deposit"], total), "catatan": "DP / Deposit awal", "tanggal": now_iso()}]
+        else:
+            payments = []
+        _, _, pay_status = compute_payment(total, payments)
         doc = {
             "id": str(uuid.uuid4()),
             "transaksi_id": f"TRX-{datetime.now().strftime('%Y%m')}-{count:04d}",
@@ -772,8 +1096,9 @@ async def seed():
             "jumlah_hari": units,
             "subtotal": subtotal,
             "deposit": rd["deposit"],
+            "payments": payments,
             "total": total,
-            "status_pembayaran": rd["pay"],
+            "status_pembayaran": pay_status,
             "status_rental": rd["status"],
             "catatan": "",
             "created_at": now_iso(),
@@ -784,6 +1109,29 @@ async def seed():
     ym = datetime.now().strftime("%Y%m")
     await db.counters.update_one({"_id": f"trx-{ym}"}, {"$set": {"seq": count}}, upsert=True)
     logger.info("Sample data seeded")
+
+
+async def migrate_payments():
+    """Add a payments[] array to legacy rentals based on old deposit/status."""
+    cursor = db.rentals.find({"payments": {"$exists": False}})
+    migrated = 0
+    async for r in cursor:
+        total = r.get("total", 0)
+        old = r.get("status_pembayaran", "")
+        deposit = r.get("deposit", 0) or 0
+        if old == "Lunas":
+            payments = [{"id": str(uuid.uuid4()), "amount": total, "catatan": "Pelunasan", "tanggal": r.get("created_at", now_iso())}]
+        elif old in ("DP", "DP / Sebagian") and deposit > 0:
+            payments = [{"id": str(uuid.uuid4()), "amount": min(deposit, total), "catatan": "DP / Deposit awal", "tanggal": r.get("created_at", now_iso())}]
+        elif deposit > 0:
+            payments = [{"id": str(uuid.uuid4()), "amount": min(deposit, total), "catatan": "DP / Deposit awal", "tanggal": r.get("created_at", now_iso())}]
+        else:
+            payments = []
+        _, _, pay_status = compute_payment(total, payments)
+        await db.rentals.update_one({"id": r["id"]}, {"$set": {"payments": payments, "status_pembayaran": pay_status}})
+        migrated += 1
+    if migrated:
+        logger.info(f"Migrated payments for {migrated} rentals")
 
 
 # ---------------------------------------------------------------------------
@@ -809,6 +1157,7 @@ async def startup():
     except Exception as e:
         logger.error(f"Storage init failed: {e}")
     await seed()
+    await migrate_payments()
 
 
 @app.on_event("shutdown")

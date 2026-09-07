@@ -318,8 +318,14 @@ class TestRentals:
             assert p.status_code == 200 and p.json()["status_rental"] == "Aktif"
             assert client.get(f"{API}/vehicles/{veh['id']}").json()["status"] == "Disewa"
 
-            p2 = client.patch(f"{API}/rentals/{rid}/status", json={"status_pembayaran": "Lunas"})
-            assert p2.status_code == 200 and p2.json()["status_pembayaran"] == "Lunas"
+            # Payment status is now auto-derived from payments; manual status_pembayaran was removed.
+            # Pay the remaining amount to become Lunas.
+            g_before = client.get(f"{API}/rentals/{rid}").json()
+            sisa = g_before["sisa"]
+            if sisa > 0:
+                pay = client.post(f"{API}/rentals/{rid}/payments", json={"amount": sisa})
+                assert pay.status_code == 200
+                assert pay.json()["status_pembayaran"] == "Lunas"
 
             p3 = client.patch(f"{API}/rentals/{rid}/status", json={"status_rental": "Selesai"})
             assert p3.status_code == 200
@@ -327,8 +333,7 @@ class TestRentals:
 
             bad = client.patch(f"{API}/rentals/{rid}/status", json={"status_rental": "Ngawur"})
             assert bad.status_code == 400
-            bad2 = client.patch(f"{API}/rentals/{rid}/status", json={"status_pembayaran": "Ngawur"})
-            assert bad2.status_code == 400
+            # NOTE: status_pembayaran via PATCH was removed; payment status is derived from payments.
         finally:
             client.delete(f"{API}/rentals/{rid}")
             assert client.get(f"{API}/rentals/{rid}").status_code == 404

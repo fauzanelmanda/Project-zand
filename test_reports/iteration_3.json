@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 3 verified the NEW ARMI features: rental EDIT, multiple payments per rental, invoice PDF, WhatsApp Kirim Invoice, and calendar filters. Backend: full pytest suite 76/76 passing (added /app/backend/tests/test_new_features.py with 8 focused cases covering DP + additional payment + overpay-reject + Bayar penuh->Lunas, edit preserves transaksi_id, edit vehicle on Aktif releases old vehicle and disewa's the new one, edit type Harian->24 Jam recalcs jumlah_hari and harga override, edit overlap 409, public invoice PDF %PDF- header + application/pdf CT, dashboard.outstanding + reports.total_paid/outstanding present). Also fixed 2 stale iteration_2 test assertions that still expected the removed manual status_pembayaran PATCH and old 'DP' label (payment status is now auto-derived: 'Belum Dibayar' / 'DP / Sebagian' / 'Lunas'). Frontend (Playwright, desktop 1920x1080): admin login OK; create rental Harian with Rp 100.000 DP -> paid=Rp 100.000 / sisa=Rp 800.000, add Rp 50.000 -> paid=Rp 150.000 / sisa=Rp 750.000, 'Bayar penuh' -> sisa=Rp 0 & auto 'Lunas'; Edit customer through rental-save-edit + rental-edit-confirm (summary AlertDialog) succeeded and persisted after refresh; GET /api/invoices/{id} returned 200 application/pdf 2776 bytes; WA 'Kirim Invoice' link href is https://wa.me/62... with message containing customer name, No. Invoice TRX-..., vehicle, dates, Total, Sisa and /api/invoices/{id} URL; Calendar filters work (baseline 4 items -> vehicle-only 1 item -> vehicle+Harian 1 item, options include Semua Kendaraan/Semua Tipe/Semua Status); Dashboard shows 'Total Sisa Tagihan Rp 1.240.000' via data-testid stat-outstanding; Reports shows report-total-paid Rp 1.800.000 and report-outstanding Rp 1.240.000. Overpay-reject (backend 400) confirmed via pytest (frontend button is disabled/limited by paySisa max, so UI can't submit >sisa). Regression on rest of app: unchanged from iteration_2 (Aktif-now vs Booking confirm flow, Mulai Rental, Cancel booking, double-booking prevention, vehicle & customer CRUD, customer rental history, search & filters) still passing. No new functional defects found in the iteration-3 scope.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PATCH /api/rentals/{id}/status", "issue": "Passing status_pembayaran in the body is silently ignored (payment status is now derived from payments). Consider returning 400 for unknown payload keys so old integrations fail loudly."},
+      {"endpoint": "GET /api/invoices/{id}", "issue": "Endpoint is public by design (shareable link) but leaks full customer PII (name, WhatsApp, address) to anyone who guesses/knows a rental UUID. UUID is unguessable but an authenticated + signed-URL variant would be safer."},
+      {"endpoint": "N/A", "issue": "Iteration_2 minors still open: login_attempts counter not reset on lock expiry, brute-force keyed by email only, revenue includes 'Booking' status, 6-month chart uses i*30-day arithmetic, CORS defaults to '*' with allow_credentials=true, server.py >1100 lines still one module."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Rental list cards & Rental form", "issues": ["Multiple DialogContent still missing aria Description/aria-describedby -> React console warning (mobile Sheet + edit/payment dialogs).", "Dev-mode 'Uncaught runtime errors: ResizeObserver loop completed with undelivered notifications' overlay from Recharts container in Rentals page; benign in prod but blocks Playwright dropdown clicks and is user-visible in dev."]},
+      {"screen": "Rental form (Harian + 24 Jam) and Reports Kustom", "issues": ["Native <input type=date>/<input type=datetime-local> pickers still show US 'mm/dd/yyyy' placeholders inside an all-Bahasa-Indonesia UI (same finding as iterations 1 & 2; shadcn Calendar not adopted)."]},
+      {"screen": "Reports card labels", "issues": ["stat/report values render as one string ('Rp 1.800.000Sudah Dibayar') because label and value share the same testid element without a visual/text separator - cosmetic only, add a space or wrap label in its own testid'd span."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_rental_types.py",
+    "/app/test_reports/pytest/iteration3.xml"
+  ],
+  "action_items": [
+    "Nothing blocking. Optional: (a) 400 on unknown keys in PATCH /rentals/{id}/status, (b) consider signed/authenticated invoice URLs given PII exposure, (c) still-open iteration_2 items (login-attempt reset, CORS wildcard with credentials, revenue excluding Booking, native date pickers, server.py split)."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew from ~815 to ~1160 lines with the new invoice/payments/edit code; still one module, still exceeds the 700-line guideline. Split into routers (auth, vehicles, customers, rentals, payments, invoices, dashboard, reports, seed).",
+    "GET /api/invoices/{id} is intentionally public; because it returns customer name/whatsapp/address a leaked rental UUID = PII leak. Either require the token (already stored in localStorage & sent as Bearer) or issue a signed one-time link.",
+    "release_vehicle_if_free() duplicates the availability logic already inside sync_vehicle_status(); merge to a single helper to avoid drift.",
+    "compute_payment() calls sum() over p.get('amount', 0) but does not defensively cast to float; a bad legacy payment record could raise TypeError inside enrich_rental and cascade to /rentals list.",
+    "Frontend Rentals.js is now ~600+ lines with create form, edit form, payment modal, WA menu and 4 dialogs; extract RentalForm / PaymentModal / RentalCard."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py (new, 8 pytest cases)",
+    "/app/backend/tests/backend_test.py (updated 2 stale iteration_2 assertions after status_pembayaran PATCH removal)",
+    "/app/backend/tests/test_rental_types.py (updated 'DP' expectation to allow 'DP / Sebagian')"
+  ],
+  "success_rate": {"backend": "100% (76/76 pytest)", "frontend": "100% of iteration-3 scope (14 UI checks passed: create+DP, add payment, Bayar penuh->Lunas, edit customer w/ confirm dialog, invoice PDF 200/pdf, WA link content, 3 calendar filters, dashboard Total Sisa Tagihan, reports Sudah Dibayar & Sisa Tagihan)"},
+  "test_credentials": "fauzan.elmanda@gmail.com / admin123 (from /app/memory/test_credentials.md) - valid",
+  "seed_data_creation": "No permanent seed added. Created ~5 rentals with 2027-08 dates via UI + pytest fixtures; all deleted by /app/backend/tests/cleanup_frontend_qa.py (deleted 1 residual, vehicle statuses reset). DB baseline confirmed: 6 rentals, tersedia/disewa/maintenance in sync.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All iteration-3 features (rental EDIT, multi-payments, invoice PDF, WA Kirim Invoice, calendar filters, Total Sisa Tagihan card, Reports paid/outstanding) verified end-to-end. Payment status is now DERIVED, not settable via PATCH — do not send status_pembayaran in PATCH /rentals/{id}/status. Payment status values: 'Belum Dibayar' / 'DP / Sebagian' / 'Lunas' (StatusBadge still supports legacy 'DP'/'Belum bayar'). Invoice endpoint is public GET /api/invoices/{id} returning application/pdf (no auth). WA link testid pattern: rental-wa-{id} opens a shadcn DropdownMenu; wa-invoice-{id} anchor is only in the DOM while menu is open. To bypass CRA dev-mode ResizeObserver error overlay in Playwright, run: document.querySelectorAll('iframe').forEach(f=>f.remove()). Backend suite: cd /app/backend && python -m pytest tests/ -q  (pytest.ini forces -n 2 --dist loadscope). Test-data cleanup: python /app/backend/tests/cleanup_frontend_qa.py after UI runs.",
+  "rca_of_the_issue": "No product defects reproduced. Two pytest failures on first regression run were stale iteration_2 assertions against removed manual payment-status PATCH ('DP' vs new 'DP / Sebagian') — fixed test-side. One Playwright hang on wa-invoice-{id} was caused by the CRA dev-mode ResizeObserver error overlay blocking pointer events after the WA DropdownMenu opened; removing the CRA overlay iframe let the test read the link href correctly. Both were environmental, not product bugs."
+}

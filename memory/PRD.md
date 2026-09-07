@@ -21,6 +21,13 @@ Professional Indonesian (Bahasa Indonesia UI) mobile-first web app to manage a c
 - Reports: total rental/pendapatan/aktif/selesai/dibatalkan with Today/Week/Month/Custom filters.
 - WhatsApp deep links: konfirmasi booking, pengingat pembayaran, pengingat pengembalian, kontak.
 
+## Implemented (2026-09-07)
+- **Edit Rental**: PUT /api/rentals/{id} — change customer, vehicle, tipe sewa, dates/times, tarif per hari, notes; transaksi_id & payment history preserved; overlap re-checked (409); auto-recalc; vehicle availability synced (release old / occupy new on Aktif). UI: Edit button → form prefill → change-summary confirm dialog.
+- **Multiple Payments / Sisa Tagihan**: POST /api/rentals/{id}/payments; Total Paid = Σ payments; Sisa = Total − Paid; status auto (Belum Dibayar / DP / Sebagian / Lunas); overpay rejected (400). Shown on rental cards, payment modal, invoice, dashboard "Total Sisa Tagihan" card, reports (Sudah Dibayar + Sisa Tagihan). Legacy rentals backfilled via migrate_payments().
+- **Invoice PDF**: public GET /api/invoices/{id} (reportlab) with header ARMI Rental Management / ARMI DPD SULSEL, customer, rental, payment breakdown, grand total/paid/remaining. UI: Invoice button + WhatsApp "Kirim Invoice" (message includes totals + invoice URL).
+- **Calendar Filters**: by Vehicle, Rental Type, and Status — combine and update instantly.
+- Verified by testing agent: backend 76/76 pytest, frontend 100% of scope, no functional defects.
+
 ## Implemented (2026-09-04)
 - Rental type **Harian** (inclusive day count, e.g. 1→3 Sep = 3 hari) & **24 Jam** (date+time, exact `N × 24 Jam` = ceil(hours/24)), stored on rental and shown in form/list/calendar/customer history.
 - Post-creation confirmation modal: "Order berhasil dibuat" → 🟢 Aktif Sekarang (rental Aktif + vehicle Disewa) or 🔵 Simpan sebagai Booking (vehicle stays Tersedia, dates still locked).

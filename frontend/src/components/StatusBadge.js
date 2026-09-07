@@ -15,7 +15,9 @@ const rentalStyles = {
 
 const payStyles = {
   "Belum bayar": "bg-red-50 text-red-700 border-red-200",
+  "Belum Dibayar": "bg-red-50 text-red-700 border-red-200",
   DP: "bg-amber-50 text-amber-700 border-amber-200",
+  "DP / Sebagian": "bg-amber-50 text-amber-700 border-amber-200",
   Lunas: "bg-emerald-50 text-emerald-700 border-emerald-200",
 };
 
