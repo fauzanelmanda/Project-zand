@@ -53,6 +53,7 @@ function joinDT(tanggal, waktu) {
 export default function Rentals() {
   const qc = useQueryClient();
   const [filter, setFilter] = useState("Semua");
+  const [payFilter, setPayFilter] = useState("Semua");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
@@ -63,6 +64,7 @@ export default function Rentals() {
   const [startRental, setStartRental] = useState(null);
   const [cancelRental, setCancelRental] = useState(null);
   const [deleteRental, setDeleteRental] = useState(null);
+  const [selesaiWarn, setSelesaiWarn] = useState(null);
   const [payRental, setPayRental] = useState(null);
   const [payForm, setPayForm] = useState({ amount: "", catatan: "" });
 
@@ -180,7 +182,7 @@ export default function Rentals() {
   });
 
   const openAdd = () => { setEditing(null); setForm(empty); setDtStart(""); setDtEnd(""); setDialogOpen(true); };
-  const openEdit = (r) => {
+  const doOpenEdit = (r) => {
     setEditing(r);
     setForm({
       customer_id: r.customer_id, vehicle_id: r.vehicle_id, tipe_sewa: r.tipe_sewa || "Harian",
@@ -194,6 +196,10 @@ export default function Rentals() {
     } else { setDtStart(""); setDtEnd(""); }
     setDialogOpen(true);
   };
+  const openEdit = (r) => {
+    if (r.status_rental === "Selesai") { setSelesaiWarn(r); return; }
+    doOpenEdit(r);
+  };
 
   const onVehicleChange = (v) => {
     const veh = vehicles.find((x) => x.id === v);
@@ -202,6 +208,13 @@ export default function Rentals() {
 
   const formValid = form.customer_id && form.vehicle_id && calc && !calc.invalid;
   const paySisa = payRental ? payRental.sisa : 0;
+
+  const displayed = useMemo(() => rentals.filter((r) => {
+    if (payFilter === "Belum Lunas") return r.sisa > 0;
+    if (payFilter === "DP") return r.total_paid > 0 && r.sisa > 0;
+    if (payFilter === "Lunas") return r.sisa <= 0;
+    return true;
+  }), [rentals, payFilter]);
 
   return (
     <div className="space-y-6">
@@ -215,33 +228,52 @@ export default function Rentals() {
         </Button>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {["Semua", ...rentalStatuses].map((s) => (
-          <button
-            key={s}
-            data-testid={`rental-filter-${s}`}
-            onClick={() => setFilter(s)}
-            className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-200 ${
-              filter === s ? "bg-blue-600 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-            }`}
-          >
-            {s}
-          </button>
-        ))}
+      <div className="space-y-2">
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {["Semua", ...rentalStatuses].map((s) => (
+            <button
+              key={s}
+              data-testid={`rental-filter-${s}`}
+              onClick={() => setFilter(s)}
+              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-200 ${
+                filter === s ? "bg-blue-600 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto pb-1">
+          <span className="whitespace-nowrap text-xs font-medium text-slate-400">Pembayaran:</span>
+          {["Semua", "Belum Lunas", "DP", "Lunas"].map((s) => (
+            <button
+              key={s}
+              data-testid={`pay-filter-${s}`}
+              onClick={() => setPayFilter(s)}
+              className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-200 ${
+                payFilter === s
+                  ? "bg-slate-800 text-white"
+                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
 
       {isLoading ? (
         <div className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}
         </div>
-      ) : rentals.length === 0 ? (
+      ) : displayed.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white py-16 text-center">
           <ClipboardList className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-500">Belum ada rental.</p>
+          <p className="mt-3 text-sm text-slate-500">Tidak ada rental untuk filter ini.</p>
         </div>
       ) : (
         <div className="space-y-3" data-testid="rental-list">
-          {rentals.map((r) => (
+          {displayed.map((r) => (
             <div
               key={r.id}
               data-testid={`rental-card-${r.id}`}
@@ -590,6 +622,29 @@ export default function Rentals() {
           <AlertDialogFooter>
             <AlertDialogCancel>Kembali</AlertDialogCancel>
             <AlertDialogAction data-testid="confirm-cancel-button" className="bg-red-600 hover:bg-red-700" onClick={() => cancelMut.mutate(cancelRental.id)}>Batalkan Booking</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Selesai edit warning */}
+      <AlertDialog open={!!selesaiWarn} onOpenChange={() => setSelesaiWarn(null)}>
+        <AlertDialogContent data-testid="selesai-warn-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>⚠️ Transaksi ini sudah selesai</AlertDialogTitle>
+            <AlertDialogDescription>
+              Perubahan dapat memengaruhi data pembayaran, laporan keuangan, dan riwayat kendaraan.
+              Apakah Anda yakin ingin mengedit transaksi ini?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="selesai-warn-cancel">Batal</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="selesai-warn-continue"
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={() => { const r = selesaiWarn; setSelesaiWarn(null); doOpenEdit(r); }}
+            >
+              Lanjutkan Edit
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

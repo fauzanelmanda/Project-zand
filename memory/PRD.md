@@ -21,6 +21,11 @@ Professional Indonesian (Bahasa Indonesia UI) mobile-first web app to manage a c
 - Reports: total rental/pendapatan/aktif/selesai/dibatalkan with Today/Week/Month/Custom filters.
 - WhatsApp deep links: konfirmasi booking, pengingat pembayaran, pengingat pengembalian, kontak.
 
+## Implemented (2026-09-10)
+- **Combined Rental + Payment filters** on Rental page: existing status pills (Semua/Booking/Aktif/Selesai/Dibatalkan) plus a NEW payment pill row (Semua/Belum Lunas/DP/Lunas). Both combine. Logic (client-side on total_paid/sisa): Belum Lunas = sisa>0, DP = paid>0 & sisa>0, Lunas = sisa==0. Horizontal-scroll compact on mobile.
+- **Selesai edit warning**: editing a Selesai rental first shows a confirmation ("⚠️ Transaksi ini sudah selesai…") with Batal / Lanjutkan Edit; edit only opens on Lanjutkan; payment history & transaksi_id preserved. Aktif/Booking edits open directly.
+- Verified by testing agent: frontend 100% of scope; backend unchanged (75/76 pytest; the 1 red is a pre-existing seed-dependent vehicle-delete test, not a product defect).
+
 ## Implemented (2026-09-07)
 - **Edit Rental**: PUT /api/rentals/{id} — change customer, vehicle, tipe sewa, dates/times, tarif per hari, notes; transaksi_id & payment history preserved; overlap re-checked (409); auto-recalc; vehicle availability synced (release old / occupy new on Aktif). UI: Edit button → form prefill → change-summary confirm dialog.
 - **Multiple Payments / Sisa Tagihan**: POST /api/rentals/{id}/payments; Total Paid = Σ payments; Sisa = Total − Paid; status auto (Belum Dibayar / DP / Sebagian / Lunas); overpay rejected (400). Shown on rental cards, payment modal, invoice, dashboard "Total Sisa Tagihan" card, reports (Sudah Dibayar + Sisa Tagihan). Legacy rentals backfilled via migrate_payments().

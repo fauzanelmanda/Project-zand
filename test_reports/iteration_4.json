@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 4 verified the TWO new frontend behaviors on the Rental/Booking page: (1) combined payment-status filter row (pay-filter-Semua/Belum Lunas/DP/Lunas) working together with existing rental-status filter row, and (2) Selesai edit warning AlertDialog. Backend regression pytest: 75/76 pass (1 pre-existing seed-dependent failure in TestVehicles.test_delete_blocked_when_active_rental — no Aktif rentals seeded, unrelated to this iteration). Frontend Playwright (desktop 1400x1000): admin login OK; baseline 6 rentals (5 Lunas, 1 DP/Booking sisa=Rp 940.000). Pay filter counts as expected: Semua=6, Belum Lunas=1, DP=1, Lunas=5. Combined filters correct: Semua+DP=1, Booking+DP=1, Aktif+DP=0, Selesai+DP=0, Dibatalkan+DP=0. Selesai edit flow: clicking rental-edit-<id> on a Selesai rental opens data-testid selesai-warn-dialog WITHOUT opening the edit form (rental-save-edit-button not in DOM); clicking selesai-warn-cancel closes the warn and does NOT open edit form; re-clicking Edit then selesai-warn-continue opens the edit form. Booking rental Edit opens edit form directly (no warn). Created a new Booking rental with deposit=0 (Rp 0 paid) to verify: it appears under Belum Lunas (count went from 1 -> 2 including Rp 0/Rp 600.000) but does NOT appear under DP (count stayed at 1) — matches spec 'Rp 0 paid appears under Belum Lunas but NOT DP'. Partially-paid Booking rental (paid Rp 200.000, sisa Rp 940.000) appears in BOTH Belum Lunas and DP as expected. All fully-paid rentals appear only under Lunas. Test data cleaned up via cleanup_frontend_qa.py (1 deleted). No functional defects in iteration-4 scope.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "N/A (test seed)", "issue": "backend_test.py::TestVehicles::test_delete_blocked_when_active_rental fails because current DB has 0 Aktif rentals — test does not seed one before asserting the delete-block. Pre-existing, not caused by iteration 4."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Rental page", "issues": ["Iteration-2/3 findings still open (unchanged this iteration): DialogContent aria-describedby warning on some modals; CRA dev-mode ResizeObserver overlay iframe blocks Playwright until removed; native mm/dd/yyyy date pickers instead of shadcn Calendar."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_new_features.py",
+    "/app/test_reports/pytest/iteration4.xml"
+  ],
+  "action_items": [
+    "(Optional) Seed at least one Aktif rental in the shared test DB or make TestVehicles.test_delete_blocked_when_active_rental self-seed a rental to become independent — the 1/76 red is pre-existing."
+  ],
+  "critical_code_review_comments": [
+    "Rentals.js has grown further with a 5th AlertDialog (selesai-warn) — file is ~665 lines; still recommended to extract RentalForm / PaymentModal / RentalCard as flagged in iteration_3.",
+    "openEdit() gates on r.status_rental === 'Selesai' string equality only; safe today, but if backend ever returns lowercase or i18n-varied status the guard silently bypasses.",
+    "displayed filter uses r.sisa > 0 / r.total_paid > 0 numerically — enrich_rental returns floats after the defensive cast; good, but string coerc could still bite if a legacy rental doc lacks the fields. Consider ?? 0 fallback."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "98.7% (75/76 pytest, 1 pre-existing seed failure)", "frontend": "100% of iteration-4 scope (2 new features + regression: filter row, combined filters, Rp0 vs DP, Selesai warn dialog Batal/Lanjutkan, Booking edit direct-open)"},
+  "test_credentials": "fauzan.elmanda@gmail.com / admin123 (valid)",
+  "seed_data_creation": "Created 1 Booking rental (deposit 0, dates 2027-08-01..02) via UI to test Rp 0 paid case, then deleted via /app/backend/tests/cleanup_frontend_qa.py. DB restored to 6 rentals baseline.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iteration-4 scope (combined pay filter + Selesai edit warn) is fully verified. Filter logic on Rentals.js (displayed useMemo, lines ~212-217) is client-side over r.total_paid/r.sisa, works in combination with backend status query. Selesai warn testids: selesai-warn-dialog / selesai-warn-cancel / selesai-warn-continue. Edit form only rendered after doOpenEdit() so rental-save-edit-button presence is a reliable signal for 'edit form actually opened'. Backend unchanged. Cleanup: python /app/backend/tests/cleanup_frontend_qa.py. CRA overlay: document.querySelectorAll('iframe').forEach(f=>f.remove()).",
+  "rca_of_the_issue": "N/A — no product defects in iteration-4 scope. The single backend pytest red (test_delete_blocked_when_active_rental) is pre-existing and environmental: the shared test DB currently has all rentals in Selesai/Booking, so the assertion 'rentals is non-empty' fails before the block behavior can be exercised."
+}
