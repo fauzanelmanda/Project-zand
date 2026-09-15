@@ -142,12 +142,51 @@ class VehicleInput(BaseModel):
     status: str = "Tersedia"
     catatan: Optional[str] = ""
     foto_url: Optional[str] = ""
+    last_service_date: Optional[str] = None
+    next_service_date: Optional[str] = None
+    odometer_km: Optional[int] = None
 
     @field_validator("status")
     @classmethod
     def valid_status(cls, v):
         if v not in ("Tersedia", "Disewa", "Maintenance"):
             raise ValueError("Status kendaraan tidak valid")
+        return v
+
+
+EXPENSE_CATEGORIES = ["BBM", "Cuci", "Servis", "Oli", "Ban", "Suku Cadang",
+                      "Pajak", "Asuransi", "Tol/Parkir", "Gaji/Operasional", "Lainnya"]
+
+
+class ExpenseInput(BaseModel):
+    tanggal: str
+    category: str
+    amount: float
+    vehicle_id: Optional[str] = None
+    catatan: Optional[str] = ""
+    payment_method: Optional[str] = ""
+
+    @field_validator("tanggal")
+    @classmethod
+    def valid_date(cls, v):
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except (ValueError, TypeError):
+            raise ValueError("Format tanggal tidak valid (gunakan YYYY-MM-DD)")
+        return v
+
+    @field_validator("category")
+    @classmethod
+    def valid_cat(cls, v):
+        if v not in EXPENSE_CATEGORIES:
+            raise ValueError("Kategori pengeluaran tidak valid")
+        return v
+
+    @field_validator("amount")
+    @classmethod
+    def valid_amount(cls, v):
+        if v is None or v <= 0:
+            raise ValueError("Jumlah pengeluaran harus lebih dari 0")
         return v
 
 
@@ -499,6 +538,25 @@ async def delete_vehicle(vehicle_id: str, user: dict = Depends(get_current_user)
     return {"message": "Kendaraan dihapus"}
 
 
+@api_router.get("/vehicles/{vehicle_id}/summary")
+async def vehicle_summary(vehicle_id: str, user: dict = Depends(get_current_user)):
+    veh = await db.vehicles.find_one({"id": vehicle_id}, {"_id": 0})
+    if not veh:
+        raise HTTPException(status_code=404, detail="Kendaraan tidak ditemukan")
+    rentals = await db.rentals.find({"vehicle_id": vehicle_id}, {"_id": 0}).to_list(5000)
+    valid = [r for r in rentals if r["status_rental"] != "Dibatalkan"]
+    rental_revenue = sum(r.get("total", 0) for r in valid)
+    expenses = await db.expenses.find({"vehicle_id": vehicle_id}, {"_id": 0}).sort("tanggal", -1).to_list(5000)
+    total_expenses = sum(x.get("amount", 0) for x in expenses)
+    return {
+        "total_rentals": len(valid),
+        "rental_revenue": rental_revenue,
+        "total_expenses": total_expenses,
+        "net_profit": rental_revenue - total_expenses,
+        "expenses": expenses,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Customers
 # ---------------------------------------------------------------------------
@@ -582,6 +640,8 @@ async def create_rental(data: RentalInput, user: dict = Depends(get_current_user
     vehicle = await db.vehicles.find_one({"id": data.vehicle_id})
     if not vehicle:
         raise HTTPException(status_code=404, detail="Kendaraan tidak ditemukan")
+    if vehicle.get("status") == "Maintenance":
+        raise HTTPException(status_code=400, detail="Kendaraan sedang maintenance dan tidak dapat disewakan")
     customer = await db.customers.find_one({"id": data.customer_id})
     if not customer:
         raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
@@ -645,6 +705,8 @@ async def edit_rental(rental_id: str, data: RentalUpdate, user: dict = Depends(g
     vehicle = await db.vehicles.find_one({"id": data.vehicle_id})
     if not vehicle:
         raise HTTPException(status_code=404, detail="Kendaraan tidak ditemukan")
+    if vehicle.get("status") == "Maintenance":
+        raise HTTPException(status_code=400, detail="Kendaraan sedang maintenance dan tidak dapat disewakan")
     customer = await db.customers.find_one({"id": data.customer_id})
     if not customer:
         raise HTTPException(status_code=404, detail="Pelanggan tidak ditemukan")
@@ -898,6 +960,96 @@ async def invoice_pdf(rental_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Expenses / Keuangan
+# ---------------------------------------------------------------------------
+async def enrich_expense(e: dict):
+    e.pop("_id", None)
+    if e.get("vehicle_id"):
+        v = await db.vehicles.find_one({"id": e["vehicle_id"]}, {"_id": 0})
+        e["vehicle"] = v
+    else:
+        e["vehicle"] = None
+    return e
+
+
+@api_router.get("/expenses")
+async def list_expenses(vehicle_id: Optional[str] = None, start: Optional[str] = None,
+                        end: Optional[str] = None, user: dict = Depends(get_current_user)):
+    query = {}
+    if vehicle_id:
+        query["vehicle_id"] = vehicle_id
+    expenses = await db.expenses.find(query).sort("tanggal", -1).to_list(5000)
+    if start and end:
+        s = safe_parse_date(start, "start")
+        e = safe_parse_date(end, "end")
+        expenses = [x for x in expenses if s <= parse_date(x["tanggal"]) <= e]
+    return [await enrich_expense(x) for x in expenses]
+
+
+@api_router.post("/expenses")
+async def create_expense(data: ExpenseInput, user: dict = Depends(get_current_user)):
+    if data.vehicle_id:
+        veh = await db.vehicles.find_one({"id": data.vehicle_id})
+        if not veh:
+            raise HTTPException(status_code=404, detail="Kendaraan tidak ditemukan")
+    # Guard against accidental double submission (identical record within 15s)
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=15)).isoformat()
+    dup = await db.expenses.find_one({
+        "tanggal": data.tanggal, "category": data.category, "amount": data.amount,
+        "vehicle_id": data.vehicle_id, "catatan": data.catatan or "",
+        "created_at": {"$gte": cutoff},
+    })
+    if dup:
+        raise HTTPException(status_code=409, detail="Pengeluaran serupa baru saja dicatat")
+    doc = data.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.expenses.insert_one(doc)
+    doc.pop("_id", None)
+    return await enrich_expense(doc)
+
+
+@api_router.delete("/expenses/{expense_id}")
+async def delete_expense(expense_id: str, user: dict = Depends(get_current_user)):
+    res = await db.expenses.delete_one({"id": expense_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Pengeluaran tidak ditemukan")
+    return {"message": "Pengeluaran dihapus"}
+
+
+@api_router.get("/finance")
+async def finance(start: Optional[str] = None, end: Optional[str] = None,
+                  user: dict = Depends(get_current_user)):
+    rentals = await db.rentals.find({}, {"_id": 0}).to_list(5000)
+    expenses = await db.expenses.find({}, {"_id": 0}).to_list(5000)
+    if start and end:
+        s = safe_parse_date(start, "start")
+        e = safe_parse_date(end, "end")
+        rentals = [r for r in rentals if s <= parse_date(r["tanggal_mulai"]) <= e]
+        expenses = [x for x in expenses if s <= parse_date(x["tanggal"]) <= e]
+
+    total_revenue = sum(r.get("total", 0) for r in rentals if r["status_rental"] != "Dibatalkan")
+    total_expenses = sum(x.get("amount", 0) for x in expenses)
+    net_profit = total_revenue - total_expenses
+
+    by_category = {}
+    for x in expenses:
+        by_category[x["category"]] = by_category.get(x["category"], 0) + x.get("amount", 0)
+    by_category = [{"category": k, "amount": v} for k, v in sorted(by_category.items(), key=lambda i: -i[1])]
+
+    recent = sorted(expenses, key=lambda x: x.get("created_at", ""), reverse=True)[:10]
+    recent = [await enrich_expense(dict(x)) for x in recent]
+
+    return {
+        "total_revenue": total_revenue,
+        "total_expenses": total_expenses,
+        "net_profit": net_profit,
+        "by_category": by_category,
+        "recent_expenses": recent,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
 @api_router.get("/dashboard")
@@ -924,6 +1076,10 @@ async def dashboard(user: dict = Depends(get_current_user)):
 
     recent = await db.rentals.find({}).sort("created_at", -1).limit(5).to_list(5)
     recent = [await enrich_rental(r) for r in recent]
+
+    all_expenses = await db.expenses.find({}, {"_id": 0}).to_list(5000)
+    expenses_month = sum(x.get("amount", 0) for x in all_expenses if x["tanggal"][:7] == month_start)
+    net_profit_month = revenue - expenses_month
 
     today = date.today()
     returning_today = []
@@ -956,6 +1112,8 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "active_bookings": active_bookings,
         "revenue": revenue,
         "outstanding": outstanding,
+        "expenses_month": expenses_month,
+        "net_profit_month": net_profit_month,
         "recent": recent,
         "returning_today": returning_today,
         "returning_soon": returning_soon,
@@ -986,11 +1144,19 @@ async def reports(start: Optional[str] = None, end: Optional[str] = None,
     aktif = sum(1 for r in rentals if r["status_rental"] == "Aktif")
     selesai = sum(1 for r in rentals if r["status_rental"] == "Selesai")
     dibatalkan = sum(1 for r in rentals if r["status_rental"] == "Dibatalkan")
+    expenses = await db.expenses.find({}, {"_id": 0}).to_list(5000)
+    if start and end:
+        s2 = safe_parse_date(start, "start")
+        e2 = safe_parse_date(end, "end")
+        expenses = [x for x in expenses if s2 <= parse_date(x["tanggal"]) <= e2]
+    total_expenses = sum(x.get("amount", 0) for x in expenses)
     return {
         "total_rental": total_rental,
         "total_revenue": total_revenue,
         "total_paid": total_paid,
         "outstanding": outstanding,
+        "total_expenses": total_expenses,
+        "net_profit": total_revenue - total_expenses,
         "aktif": aktif,
         "selesai": selesai,
         "dibatalkan": dibatalkan,
